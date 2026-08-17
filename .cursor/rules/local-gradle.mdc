@@ -1,0 +1,28 @@
+---
+description: 使用本机已安装的 Gradle，禁止重新下载发行包；沙箱构建必须指向本地解压路径
+alwaysApply: true
+---
+
+# 本地 Gradle 与沙箱路径
+
+本机已具备完整 Gradle，**禁止**再从 `services.gradle.org` 下载发行包。
+
+构建、测试、assemble 一律调用已解压的可执行文件（工作目录为仓库根 `D:\workspace\demo\a-log`）：
+
+```
+C:\Users\75712\.gradle\wrapper\dists\gradle-8.7-all\aan3ydargesu18aqyqjwhr3pc\gradle-8.7\bin\gradle.bat
+```
+
+示例：
+
+```
+& "C:\Users\75712\.gradle\wrapper\dists\gradle-8.7-all\aan3ydargesu18aqyqjwhr3pc\gradle-8.7\bin\gradle.bat" :alog-format:test
+```
+
+约束：
+
+- 不要改 `gradle-wrapper.properties` 的发行包类型（保持 `gradle-8.7-all`）。换成 `bin` 会换缓存哈希目录并触发下载。
+- `./gradlew` 一旦出现 `Downloading ... gradle-*.zip`，立刻停止，改用上面的 `gradle.bat`。
+- 沙箱必须能读 `%USERPROFILE%\.gradle`。若命令因路径/权限失败，用可访问该目录的方式重跑，不要改为在线下载。
+- Kotlin 增量缓存损坏（`source-to-classes.tab` / `Could not delete .../caches-jvm`）时：先 `gradle.bat --stop`，再删对应模块的 `build/`，然后重编。不要为此去下载新的 Gradle。
+- Android SDK / 本地缓存同样走本机已有目录，不要重下 Gradle 或 SDK 发行包。

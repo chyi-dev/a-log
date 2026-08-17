@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">a-log sample</string>
+    <string name="sample_title">ALog sample</string>
+    <string name="btn_single">单条日志</string>
+    <string name="btn_burst">主线程 1 万条</string>
+    <string name="btn_flush">flush(sync)</string>
+    <string name="btn_console_only">仅控制台</string>
+    <string name="btn_file_only">仅文件</string>
+    <string name="btn_both">控制台 + 文件</string>
+    <string name="btn_upload">上传日志</string>
+    <string name="btn_fetch">模拟回捞</string>
+    <string name="btn_crash">制造崩溃</string>
+    <string name="force_stop_hint">force-stop 验收：先打日志，再执行 adb shell am force-stop com.chyi.alog.sample，重开 App 后用 decode-cli 解 files/alog/ 下的 .alog。不要先点 flush。</string>
+</resources>

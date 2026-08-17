@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>ALog console</title>
+  <style>
+    body { font-family: sans-serif; margin: 16px; }
+    label { margin-right: 8px; display: inline-block; margin-bottom: 6px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+    th, td { border: 1px solid #ccc; padding: 6px; font-size: 13px; vertical-align: top; }
+    pre { background: #111; color: #eee; padding: 8px; overflow: auto; max-height: 240px; }
+    button { margin: 4px 4px 4px 0; }
+    .msg { max-width: 640px; word-break: break-all; }
+    .panel { margin-top: 24px; padding-top: 8px; border-top: 1px solid #ddd; }
+    .ok { color: #0a0; }
+    .err { color: #c00; }
+  </style>
+</head>
+<body>
+  <h1>ALog 控制台</h1>
+  <p>
+    ingest 在 <code>http://127.0.0.1:8080/</code>。不要用 IDE 预览端口 63342 当 API。
+    本页若从 IDE 打开，请求会自动打到 8080。
+  </p>
+  <div>
+    <label>API <input id="apiBase" size="32" /></label>
+    <label>unionId <input id="unionId" value="demo-user" /></label>
+    <label>deviceId <input id="deviceId" /></label>
+    <label>type
+      <select id="type">
+        <option value="">all</option>
+        <option>code</option>
+        <option>network</option>
+        <option>action</option>
+        <option>crash</option>
+        <option>internal</option>
+      </select>
+    </label>
+    <label>q <input id="q" /></label>
+    <button id="btnLoad">加载上传任务</button>
+  </div>
+  <table>
+    <thead><tr><th>uploadId</th><th>reason</th><th>unionId</th><th>status</th><th></th></tr></thead>
+    <tbody id="tasks"></tbody>
+  </table>
+
+  <div class="panel">
+    <h2>已上传日志（解密）</h2>
+    <p id="detailMeta">选择任务后解密显示</p>
+    <div>
+      <button id="btnPrev" disabled>上一页</button>
+      <button id="btnNext" disabled>下一页</button>
+      <label>每页 <input id="pageSize" type="number" value="200" min="1" max="2000" style="width:72px" /></label>
+    </div>
+    <table>
+      <thead>
+        <tr><th>ts</th><th>level</th><th>type</th><th>tag</th><th>msg</th></tr>
+      </thead>
+      <tbody id="logRows"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>创建回捞任务</h2>
+    <p>不走 Push：App 点「模拟回捞」时会拉取 pending 任务并上传，再 fetch-ack。</p>
+    <label>unionId <input id="fetchUnion" value="demo-user" /></label>
+    <label>deviceId <input id="fetchDevice" placeholder="可选，空则该用户全部设备" /></label>
+    <label>fromMs <input id="fetchFrom" type="number" /></label>
+    <label>toMs <input id="fetchTo" type="number" /></label>
+    <label>maxBytes <input id="fetchMax" type="number" value="52428800" /></label>
+    <label>level <input id="fetchLevel" placeholder="可选 INFO/ERROR" /></label>
+    <div>
+      <button id="btnCreateFetch">创建回捞任务</button>
+      <button id="btnLoadFetch">刷新回捞列表</button>
+    </div>
+    <p id="fetchHint"></p>
+    <table>
+      <thead><tr><th>taskId</th><th>status</th><th>unionId</th><th>deviceId</th><th>fromMs</th><th>toMs</th><th>maxBytes</th></tr></thead>
+      <tbody id="fetchTasks"></tbody>
+    </table>
+  </div>
+
+  <script>
+    const TOKEN = "alog-dev";
+    function defaultApiBase() {
+      const saved = localStorage.getItem("alogApiBase");
+      if (saved) return saved;
+      if (location.port === "8080" && (location.pathname === "/" || location.pathname === "/index.html")) {
+        return "";
+      }
+      return "http://127.0.0.1:8080";
+    }
+    document.getElementById("apiBase").value = defaultApiBase();
+    document.getElementById("apiBase").addEventListener("change", () => {
+      localStorage.setItem("alogApiBase", document.getElementById("apiBase").value.trim());
+    });
+    function apiUrl(path) {
+      const base = document.getElementById("apiBase").value.trim().replace(/\/$/, "");
+      return base + path;
+    }
+    async function api(path, method, body) {
+      const res = await fetch(apiUrl(path), {
+        method: method || "GET",
+        headers: {
+          Authorization: "Bearer " + TOKEN,
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text);
+      return text ? JSON.parse(text) : {};
+    }
+    function fmtTs(ts) {
+      if (!ts) return "";
+      const d = new Date(Number(ts));
+      if (isNaN(d.getTime())) return String(ts);
+      const p = (n, w) => String(n).padStart(w, "0");
+      return p(d.getFullYear(), 4) + "-" + p(d.getMonth() + 1, 2) + "-" + p(d.getDate(), 2) +
+        " " + p(d.getHours(), 2) + ":" + p(d.getMinutes(), 2) + ":" + p(d.getSeconds(), 2) +
+        "." + p(d.getMilliseconds(), 3);
+    }
+    document.getElementById("btnLoad").onclick = async () => {
+      const u = document.getElementById("unionId").value;
+      const d = document.getElementById("deviceId").value;
+      const qs = new URLSearchParams();
+      if (u) qs.set("unionId", u);
+      if (d) qs.set("deviceId", d);
+      const data = await api("/logs/tasks?" + qs.toString());
+      const tb = document.getElementById("tasks");
+      tb.innerHTML = "";
+      for (const t of data.tasks || []) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${t.uploadId}</td><td>${t.reason || ""}</td><td>${t.unionId || ""}</td><td>${t.status}</td>`;
+        const td = document.createElement("td");
+        const b = document.createElement("button");
+        b.textContent = "解密显示";
+        b.onclick = () => openDetails(t.uploadId, true);
+        td.appendChild(b);
+        tr.appendChild(td);
+        tb.appendChild(tr);
+      }
+    };
+    let currentUploadId = "";
+    let currentPage = 0;
+    let currentTotal = 0;
+    async function openDetails(id, decode) {
+      currentUploadId = id;
+      currentPage = 0;
+      if (decode) {
+        const meta = document.getElementById("detailMeta");
+        meta.textContent = "正在解密 " + id + " …";
+        try {
+          await api("/logs/tasks/" + id + "/decode", "POST", {});
+        } catch (e) {
+          meta.textContent = "解密失败: " + e.message;
+          return;
+        }
+      }
+      await loadDetailsPage();
+    }
+    async function loadDetailsPage() {
+      if (!currentUploadId) return;
+      const typ = document.getElementById("type").value;
+      const q = document.getElementById("q").value;
+      const size = Math.max(1, Number(document.getElementById("pageSize").value) || 200);
+      const qs = new URLSearchParams();
+      if (typ) qs.set("type", typ);
+      if (q) qs.set("q", q);
+      qs.set("page", String(currentPage));
+      qs.set("size", String(size));
+      const data = await api("/logs/tasks/" + currentUploadId + "/details?" + qs.toString());
+      currentTotal = data.total || 0;
+      const pages = Math.max(1, Math.ceil(currentTotal / size) || 1);
+      if (currentPage >= pages) {
+        currentPage = pages - 1;
+      }
+      document.getElementById("detailMeta").textContent =
+        currentUploadId + " 共 " + currentTotal + " 条 / 第 " + (currentPage + 1) + " / " + pages + " 页";
+      document.getElementById("btnPrev").disabled = currentPage <= 0;
+      document.getElementById("btnNext").disabled = currentPage + 1 >= pages;
+      const tb = document.getElementById("logRows");
+      tb.innerHTML = "";
+      for (const row of data.items || []) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          `<td>${fmtTs(row.ts)}</td><td>${row.level || ""}</td><td>${row.type || ""}</td>` +
+          `<td>${row.tag || ""}</td><td class="msg">${escapeHtml(row.msg || JSON.stringify(row))}</td>`;
+        tb.appendChild(tr);
+      }
+    }
+    document.getElementById("btnPrev").onclick = async () => {
+      if (currentPage > 0) {
+        currentPage -= 1;
+        await loadDetailsPage();
+      }
+    };
+    document.getElementById("btnNext").onclick = async () => {
+      currentPage += 1;
+      await loadDetailsPage();
+    };
+    document.getElementById("pageSize").onchange = async () => {
+      currentPage = 0;
+      await loadDetailsPage();
+    };
+    document.getElementById("type").onchange = async () => {
+      currentPage = 0;
+      await loadDetailsPage();
+    };
+    document.getElementById("q").addEventListener("change", async () => {
+      currentPage = 0;
+      await loadDetailsPage();
+    });
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+    document.getElementById("btnCreateFetch").onclick = async () => {
+      const hint = document.getElementById("fetchHint");
+      try {
+        const created = await api("/logs/fetch-tasks", "POST", {
+          unionId: document.getElementById("fetchUnion").value,
+          deviceId: document.getElementById("fetchDevice").value,
+          fromMs: numOrNull("fetchFrom"),
+          toMs: numOrNull("fetchTo"),
+          maxBytes: numOrNull("fetchMax") || 52428800,
+          level: document.getElementById("fetchLevel").value,
+        });
+        hint.className = "ok";
+        hint.textContent = "已创建 " + created.taskId + "，请在 App 点「模拟回捞」";
+        await loadFetchTasks();
+      } catch (e) {
+        hint.className = "err";
+        hint.textContent = e.message;
+      }
+    };
+    function numOrNull(id) {
+      const v = document.getElementById(id).value;
+      return v === "" ? null : Number(v);
+    }
+    async function loadFetchTasks() {
+      const u = document.getElementById("fetchUnion").value;
+      const d = document.getElementById("fetchDevice").value;
+      const qs = new URLSearchParams();
+      if (u) qs.set("unionId", u);
+      if (d) qs.set("deviceId", d);
+      const data = await api("/logs/fetch-tasks?" + qs.toString());
+      const tb = document.getElementById("fetchTasks");
+      tb.innerHTML = "";
+      for (const t of data.tasks || []) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          `<td>${t.taskId}</td><td>${t.status}</td><td>${t.unionId || ""}</td>` +
+          `<td>${t.deviceId || ""}</td><td>${t.fromMs || ""}</td><td>${t.toMs || ""}</td><td>${t.maxBytes || ""}</td>`;
+        tb.appendChild(tr);
+      }
+    }
+    document.getElementById("btnLoadFetch").onclick = loadFetchTasks;
+    loadFetchTasks().catch((e) => {
+      const hint = document.getElementById("fetchHint");
+      hint.className = "err";
+      hint.textContent = "连不上 ingest（请先 python server.py 8080）：" + e.message;
+    });
+  </script>
+</body>
+</html>

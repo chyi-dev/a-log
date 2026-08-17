@@ -20,5 +20,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "a-log"
-include(":app")
- 
+include(":alog-format")
+include(":alog")
+include(":alog-decode")
+include(":sample")
