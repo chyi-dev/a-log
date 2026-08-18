@@ -16,9 +16,7 @@ import com.chyi.alog.ALog
 import com.chyi.alog.ALogPaths
 import com.chyi.alog.LogConfiguration
 import com.chyi.alog.LogLevel
-import com.chyi.alog.LogType
 import com.chyi.alog.ProcessInfo
-import com.chyi.alog.crash.CrashGuard
 import com.chyi.alog.interceptor.PrivacyInterceptor
 import com.chyi.alog.printer.AndroidPrinter
 import com.chyi.alog.printer.file.FilePrinter
@@ -55,12 +53,7 @@ class ALogApp : Application() {
             .onInternal { Log.w("ALogInternal", it) }
             .build()
         initLoggers(console = BuildConfig.DEBUG, file = true)
-        CrashGuard.install(filesDir)
         startService(Intent(this, PushProcessService::class.java))
-        if (CrashGuard.consumePendingCrash(filesDir)) {
-            ALog.t(LogType.CRASH).w("pending crash flag found, will upload crash window")
-            enqueueUpload("crash")
-        }
         registerActivityLifecycleCallbacks(FlushLifecycle())
     }
 

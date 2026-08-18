@@ -64,9 +64,6 @@ class MainActivity : AppCompatActivity() {
         binding.btnStress.setOnClickListener {
             stressLimit()
         }
-        binding.btnCrash.setOnClickListener {
-            throw RuntimeException("sample crash for ALog")
-        }
     }
 
     private fun replayBusinessLog() {

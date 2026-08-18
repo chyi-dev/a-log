@@ -44,8 +44,7 @@ ALog.flush(sync = true)
 - 1 `CODE`（默认）
 - 2 `NETWORK`
 - 3 `ACTION`
-- 4 `CRASH`
-- 5 `INTERNAL`（框架告警）
+- 4 `INTERNAL`（框架告警）
 - 业务自定义从 10 起
 
 ## Printer

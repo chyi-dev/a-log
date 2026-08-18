@@ -16,7 +16,7 @@ Body JSON：
   "appVer": "1.0",
   "buildVer": "1",
   "platform": "android",
-  "reason": "manual|fetch|crash",
+  "reason": "manual|fetch",
   "formatVersion": 1,
   "maxBytes": 52428800,
   "truncated": false,
