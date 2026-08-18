@@ -58,9 +58,31 @@ class MainActivity : AppCompatActivity() {
             app.enqueueUpload("fetch")
             toast("fetch enqueued")
         }
+        binding.btnReplay.setOnClickListener {
+            replayBusinessLog()
+        }
         binding.btnCrash.setOnClickListener {
             throw RuntimeException("sample crash for ALog")
         }
+    }
+
+    private fun replayBusinessLog() {
+        toast("replaying…")
+        Thread {
+            var n = 0
+            try {
+                assets.open("log_data.txt").bufferedReader().use { reader ->
+                    reader.forEachLine { line ->
+                        ALog.i(line)
+                        n++
+                    }
+                }
+                ALog.flush(true)
+                runOnUiThread { toast("replayed $n lines") }
+            } catch (t: Throwable) {
+                runOnUiThread { toast("replay failed: ${t.message}") }
+            }
+        }.start()
     }
 
     private fun toast(msg: String) {
