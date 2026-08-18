@@ -1,10 +1,12 @@
 package com.chyi.alog.upload
 
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Process
 import androidx.core.app.NotificationCompat
 import androidx.work.ForegroundInfo
 import androidx.work.Worker
@@ -21,10 +23,14 @@ class UploadWorker(
         } catch (_: Throwable) {
         }
         val root = File(inputData.getString(KEY_DIR) ?: return Result.failure())
+        val cacheRoot = File(inputData.getString(KEY_CACHE_DIR)
+            ?: File(applicationContext.filesDir, com.chyi.alog.ALogDefaults.CACHE_DIR_NAME).absolutePath)
         val baseUrl = inputData.getString(KEY_URL) ?: return Result.failure()
         val token = inputData.getString(KEY_TOKEN) ?: "alog-dev"
         val reason = inputData.getString(KEY_REASON) ?: "manual"
-        val files = ProcessLogCollector.flushAndCollect(root)
+        val am = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val livePids = am.runningAppProcesses?.map { it.pid }?.toSet() ?: emptySet()
+        val files = ProcessLogCollector.flushAndCollect(root, cacheRoot, livePids, Process.myPid())
         val uploader = LogUploader(
             baseUrl = baseUrl,
             token = token,
@@ -91,6 +97,7 @@ class UploadWorker(
         const val KEY_DEVICE = "deviceId"
         const val KEY_APP_VER = "appVer"
         const val KEY_BUILD_VER = "buildVer"
+        const val KEY_CACHE_DIR = "cacheDir"
         const val KEY_FETCH_TASK = "fetchTask"
     }
 }

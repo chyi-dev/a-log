@@ -41,8 +41,8 @@ def decode_file(path: str, private_key_pem: str | None = None) -> list[dict]:
 
 
 def decode_bytes(data: bytes, private_key_pem: str | None = None) -> list[dict]:
-    if len(data) < 8 or data[:4] != MAGIC_FILE:
-        raise ValueError("not an ALGF file")
+    if len(data) < 4 or data[:4] != MAGIC_FILE:
+        return _decode_jsonl(data)
     flags = data[5]
     key_len = struct.unpack_from(">H", data, 6)[0]
     pos = 8
@@ -75,6 +75,17 @@ def decode_bytes(data: bytes, private_key_pem: str | None = None) -> list[dict]:
             raise
         except Exception as exc:
             rows.append({"type": "internal", "msg": "skip block seq=%s: %s" % (block["seq"], exc)})
+    return rows
+
+
+def _decode_jsonl(data: bytes) -> list[dict]:
+    text = data.decode("utf-8", "replace")
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rows.append(_parse_line(line))
     return rows
 
 

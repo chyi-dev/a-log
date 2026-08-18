@@ -28,4 +28,31 @@ class ProcessLogCollectorTest {
         assertTrue(names.contains("keep.alog"))
         assertTrue(files.none { it.name == "hidden.alog" || it.name.endsWith(".mm") })
     }
+
+    @Test
+    fun recoversDeadProcessMmap() {
+        val logRoot = tmp.newFolder("log")
+        val cacheRoot = tmp.newFolder("cache")
+        val writer = com.chyi.alog.store.MmapLogWriter(logRoot, "alog", pid = 99999, cacheDir = cacheRoot)
+        writer.append("{\"msg\":\"dead-proc\"}")
+        writer.awaitQueuedForTest()
+        writer.abandonWithoutSealForTest()
+        ProcessLogCollector.recoverDeadMmaps(logRoot, cacheRoot, livePids = emptySet(), currentPid = 1)
+        val files = ProcessLogCollector.collectAlogFiles(logRoot)
+        assertTrue(files.any { it.length() > 0 })
+    }
+
+    @Test
+    fun skipsLivePidDirectory() {
+        val logRoot = tmp.newFolder("log")
+        val cacheRoot = tmp.newFolder("cache")
+        val writer = com.chyi.alog.store.MmapLogWriter(logRoot, "alog", pid = 42, cacheDir = cacheRoot)
+        writer.append("{\"msg\":\"live\"}")
+        writer.awaitQueuedForTest()
+        val before = logRoot.listFiles { f -> f.name.endsWith(".alog") }?.size ?: 0
+        ProcessLogCollector.recoverDeadMmaps(logRoot, cacheRoot, livePids = setOf(42), currentPid = 1)
+        val after = logRoot.listFiles { f -> f.name.endsWith(".alog") }?.size ?: 0
+        assertEquals(before, after)
+        writer.close()
+    }
 }

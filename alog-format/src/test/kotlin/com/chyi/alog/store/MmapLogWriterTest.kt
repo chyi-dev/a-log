@@ -31,4 +31,19 @@ class MmapLogWriterTest {
         assertTrue(all.contains("after"))
         assertTrue(header.wrappedDek.isEmpty())
     }
+
+    @Test
+    fun skipIfLockedLeavesOwnerWriterAlone() {
+        val dir = tmp.newFolder("lock")
+        val owner = MmapLogWriter(dir, "alog", pid = 7)
+        owner.append("{\"msg\":\"owner\"}")
+        owner.awaitQueuedForTest()
+        val other = MmapLogWriter(dir, "alog", skipIfLocked = true)
+        assertTrue(other.skippedLock())
+        other.close()
+        owner.flush(true)
+        owner.close()
+        val text = AlogTestDecode.linesInDir(dir).joinToString("")
+        assertTrue(text.contains("owner"))
+    }
 }

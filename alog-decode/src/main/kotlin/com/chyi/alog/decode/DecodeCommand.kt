@@ -53,6 +53,10 @@ object DecodeCommand {
                     throw IllegalStateException("wrong private key or corrupted wrapped DEK: ${t.message}")
                 }
             }
+        } else if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) {
+            return String(bytes, Charsets.UTF_8).split('\n').filter { it.isNotBlank() }.also { lines ->
+                lines.forEach { println(it) }
+            }
         } else {
             start = 0
         }

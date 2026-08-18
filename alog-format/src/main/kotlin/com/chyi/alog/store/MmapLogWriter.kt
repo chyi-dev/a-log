@@ -29,7 +29,13 @@ class MmapLogWriter(
     nameGenerator: com.chyi.alog.printer.file.FileNameGenerator? = null,
     backupStrategy: com.chyi.alog.printer.file.BackupStrategy? = null,
     cleanStrategy: com.chyi.alog.printer.file.CleanStrategy? = null,
+    private val pid: Int = 0,
+    private val skipIfLocked: Boolean = false,
+    private val flushWaitSeconds: Long = ALogDefaults.FLUSH_WAIT_SECONDS,
+    cacheDir: File? = null,
 ) : Writer {
+    private val logDir = dir
+    private val resolvedCacheDir = cacheDir ?: dir
     private val files = fileManager ?: LogFileManager(
         dir = dir,
         namePrefix = namePrefix,
@@ -40,7 +46,7 @@ class MmapLogWriter(
         backupStrategy = backupStrategy ?: com.chyi.alog.printer.file.FileSizeBackupStrategy(),
         cleanStrategy = cleanStrategy ?: com.chyi.alog.printer.file.DefaultCleanStrategy(),
     )
-    private val mmapFile = File(dir, "$namePrefix.mm")
+    private val mmapFile = File(resolvedCacheDir, "$namePrefix.mm")
     private val queue = LinkedBlockingQueue<Cmd>(1024)
     private val running = AtomicBoolean(true)
     private val dropped = AtomicInteger(0)
@@ -49,12 +55,15 @@ class MmapLogWriter(
     private var channel: FileChannel? = null
     private var mapped: MappedByteBuffer? = null
     private var heapFallback: ByteBuffer? = null
+    private var fileLock: java.nio.channels.FileLock? = null
+    private val skippedLock = AtomicBoolean(false)
     private var seq = 0
     private var dek: ByteArray? = null
     private var fileHeader: FileHeader? = null
 
     init {
         dir.mkdirs()
+        resolvedCacheDir.mkdirs()
         worker.start()
         val opened = CountDownLatch(1)
         queue.put(Cmd.Init(opened))
@@ -79,7 +88,7 @@ class MmapLogWriter(
         if (sync) {
             val latch = CountDownLatch(1)
             queue.put(Cmd.Flush(latch))
-            latch.await(3, TimeUnit.SECONDS)
+            latch.await(flushWaitSeconds, TimeUnit.SECONDS)
         } else {
             queue.offer(Cmd.Flush(null))
         }
@@ -89,24 +98,43 @@ class MmapLogWriter(
         running.set(false)
         val latch = CountDownLatch(1)
         queue.offer(Cmd.Close(latch))
-        latch.await(3, TimeUnit.SECONDS)
+        latch.await(flushWaitSeconds, TimeUnit.SECONDS)
         worker.join(1000)
     }
 
-    fun droppedCount(): Int = dropped.get()
+    override fun droppedCount(): Int = dropped.get()
+
+    fun usedBytes(): Int {
+        val buf = mapped ?: heapFallback ?: return 0
+        return used(buf)
+    }
+
+    fun unsealedLineCount(): Int {
+        val used = usedBytes()
+        if (used <= 0) return 0
+        val buf = mapped ?: heapFallback ?: return 0
+        val body = ByteArray(used)
+        val start = ALogDefaults.MMAP_HEADER
+        for (i in 0 until used) {
+            body[i] = buf.get(start + i)
+        }
+        return String(body, StandardCharsets.UTF_8).split('\n').count { it.isNotBlank() }
+    }
+
+    fun skippedLock(): Boolean = skippedLock.get()
 
     fun abandonWithoutSealForTest() {
         running.set(false)
         val latch = CountDownLatch(1)
         queue.put(Cmd.Abandon(latch))
-        latch.await(3, TimeUnit.SECONDS)
+        latch.await(flushWaitSeconds, TimeUnit.SECONDS)
         worker.join(1000)
     }
 
     fun awaitQueuedForTest() {
         val latch = CountDownLatch(1)
         queue.put(Cmd.Barrier(latch))
-        latch.await(3, TimeUnit.SECONDS)
+        latch.await(flushWaitSeconds, TimeUnit.SECONDS)
     }
 
     private fun loop() {
@@ -115,17 +143,21 @@ class MmapLogWriter(
             when (cmd) {
                 is Cmd.Init -> {
                     openBuffer()
-                    recover()
-                    files.cleanup()
+                    if (!skippedLock.get()) {
+                        recover()
+                        files.cleanup()
+                    }
                     cmd.done.countDown()
                 }
-                is Cmd.Append -> writeLine(cmd.line)
+                is Cmd.Append -> {
+                    if (!skippedLock.get()) writeLine(cmd.line)
+                }
                 is Cmd.Flush -> {
-                    seal(forceMapped = true)
+                    if (!skippedLock.get()) seal(forceMapped = true)
                     cmd.done?.countDown()
                 }
                 is Cmd.Close -> {
-                    seal(forceMapped = true)
+                    if (!skippedLock.get()) seal(forceMapped = true)
                     closeBuffer()
                     cmd.done.countDown()
                     return
@@ -152,7 +184,27 @@ class MmapLogWriter(
             }
             val raf = java.io.RandomAccessFile(mmapFile, "rw")
             channel = raf.channel
+            fileLock = try {
+                channel!!.tryLock()
+            } catch (_: Throwable) {
+                null
+            }
+            if (fileLock == null) {
+                onInternal?.invoke("mmap locked by another process")
+                if (skipIfLocked) {
+                    skippedLock.set(true)
+                    try {
+                        channel?.close()
+                    } catch (_: Throwable) {
+                    }
+                    channel = null
+                    return
+                }
+            }
             mapped = channel!!.map(FileChannel.MapMode.READ_WRITE, 0, mmapSize.toLong())
+            if (pid > 0) {
+                File(resolvedCacheDir, "${mmapFile.nameWithoutExtension}.pid").writeText(pid.toString())
+            }
         } catch (t: Throwable) {
             onInternal?.invoke("mmap failed, heap fallback: ${t.message}")
             heapFallback = ByteBuffer.allocate(mmapSize)
@@ -313,6 +365,11 @@ class MmapLogWriter(
         }
         channel = null
         heapFallback = null
+        try {
+            fileLock?.release()
+        } catch (_: Throwable) {
+        }
+        fileLock = null
     }
 
     private fun unmap(buffer: MappedByteBuffer?) {

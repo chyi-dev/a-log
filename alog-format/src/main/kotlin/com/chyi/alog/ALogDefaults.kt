@@ -15,4 +15,6 @@ object ALogDefaults {
     const val FORMAT_VERSION = 1
     const val GCM_NONCE_BYTES = 12
     const val AES_KEY_BYTES = 32
+    const val FLUSH_WAIT_SECONDS = 60L
+    const val CACHE_DIR_NAME = "alog-cache"
 }

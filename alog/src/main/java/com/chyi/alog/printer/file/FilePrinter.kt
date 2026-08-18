@@ -32,6 +32,7 @@ class FilePrinter private constructor(
         private var maxTotalBytes: Long = ALogDefaults.MAX_TOTAL_BYTES
         private var flattener: Flattener = JsonLineFlattener()
         private var writerOverride: Writer? = null
+        private var writerMode: WriterMode = WriterMode.MMAP
         private var publicKeyPem: String? = null
         private var keyId: String = "dev-1"
         private var encrypt: Boolean = false
@@ -39,6 +40,8 @@ class FilePrinter private constructor(
         private var fileNameGenerator: FileNameGenerator? = null
         private var backupStrategy: BackupStrategy? = null
         private var cleanStrategy: CleanStrategy? = null
+        private var pid: Int = 0
+        private var cacheDir: File? = null
 
         fun namePrefix(value: String) = apply { namePrefix = value }
         fun maxFileSize(value: Long) = apply { maxFileSize = value }
@@ -46,6 +49,9 @@ class FilePrinter private constructor(
         fun maxTotalBytes(value: Long) = apply { maxTotalBytes = value }
         fun flattener(value: Flattener) = apply { flattener = value }
         fun writer(value: Writer) = apply { writerOverride = value }
+        fun writerMode(value: WriterMode) = apply { writerMode = value }
+        fun pid(value: Int) = apply { pid = value }
+        fun cacheDir(value: File) = apply { cacheDir = value }
         fun publicKeyPem(value: String?) = apply { publicKeyPem = value }
         fun keyId(value: String) = apply { keyId = value }
         fun encrypt(enabled: Boolean) = apply { encrypt = enabled }
@@ -60,19 +66,35 @@ class FilePrinter private constructor(
             } else {
                 CryptoConfig(false, keyId, null)
             }
-            val writer = writerOverride ?: MmapLogWriter(
-                dir = folder,
-                namePrefix = namePrefix,
-                maxFileSize = maxFileSize,
-                retainDays = retainDays,
-                maxTotalBytes = maxTotalBytes,
-                crypto = crypto,
-                onInternal = onInternal,
-                nameGenerator = fileNameGenerator,
-                backupStrategy = backupStrategy,
-                cleanStrategy = cleanStrategy,
-            )
+            val writer = writerOverride ?: when (writerMode) {
+                WriterMode.SIMPLE -> SimpleWriter(
+                    dir = folder,
+                    namePrefix = namePrefix,
+                    maxFileSize = maxFileSize,
+                    retainDays = retainDays,
+                    maxTotalBytes = maxTotalBytes,
+                    nameGenerator = fileNameGenerator,
+                    backupStrategy = backupStrategy,
+                    cleanStrategy = cleanStrategy,
+                )
+                WriterMode.MMAP -> MmapLogWriter(
+                    dir = folder,
+                    namePrefix = namePrefix,
+                    maxFileSize = maxFileSize,
+                    retainDays = retainDays,
+                    maxTotalBytes = maxTotalBytes,
+                    crypto = crypto,
+                    onInternal = onInternal,
+                    nameGenerator = fileNameGenerator,
+                    backupStrategy = backupStrategy,
+                    cleanStrategy = cleanStrategy,
+                    pid = if (pid != 0) pid else android.os.Process.myPid(),
+                    cacheDir = cacheDir,
+                )
+            }
             return FilePrinter(writer, flattener)
         }
     }
+
+    fun droppedCount(): Int = writer.droppedCount()
 }

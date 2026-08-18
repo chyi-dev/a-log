@@ -116,6 +116,42 @@ class IngestServerTest(unittest.TestCase):
         self.assertEqual(200, code)
         self.assertEqual(["line-2", "line-3"], [r["msg"] for r in page1["items"]])
 
+    def test_details_tag_type_and_time(self):
+        upload_id = "u-filter"
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        rows = [
+            {"ts": 100, "type": "code", "tag": "A", "msg": "a", "level": "I"},
+            {"ts": 200, "type": "network", "tag": "B", "msg": "b", "level": "W"},
+            {"ts": 300, "type": "code", "tag": "A", "msg": "c", "level": "E"},
+        ]
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "done",
+            "meta": {},
+            "files": [],
+            "details": rows,
+        }), encoding="utf-8")
+        code, data = self._json("GET", "/logs/tasks/%s/details?type=code&tag=A" % upload_id)
+        self.assertEqual(200, code)
+        self.assertEqual(["a", "c"], [r["msg"] for r in data["items"]])
+        code, timed = self._json("GET", "/logs/tasks/%s/details?fromTs=150&toTs=250" % upload_id)
+        self.assertEqual(["b"], [r["msg"] for r in timed["items"]])
+        code, summary = self._json("GET", "/logs/tasks/%s/details/summary?bucket=100" % upload_id)
+        self.assertEqual(200, code)
+        self.assertEqual(3, len(summary["buckets"]))
+
+    def test_init_upload_rejects_empty_files(self):
+        code, body = self._json("POST", "/logs/uploads", {
+            "appId": "a",
+            "unionId": "u",
+            "deviceId": "d",
+            "files": [],
+        })
+        self.assertEqual(400, code)
+        self.assertFalse((Path(self.data) / "files").exists())
+        self.assertFalse((Path(self.data) / "tasks").exists() and any((Path(self.data) / "tasks").iterdir()))
+
 
 if __name__ == "__main__":
     unittest.main()

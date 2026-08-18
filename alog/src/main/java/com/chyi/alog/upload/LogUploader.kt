@@ -21,6 +21,10 @@ class LogUploader(
     fun upload(files: List<File>, reason: String): UploadResult {
         audit("start reason=$reason files=${files.joinToString { it.name }}")
         val selected = select(files)
+        if (selected.isEmpty()) {
+            audit("skip empty upload reason=$reason")
+            return UploadResult("", false)
+        }
         val truncated = selected.sumOf { it.length() } > maxBytes || selected.size < files.size
         val init = negotiate(selected, reason, truncated)
         val uploadId = init.getString("uploadId")

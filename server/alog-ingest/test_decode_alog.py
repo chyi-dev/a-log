@@ -38,6 +38,11 @@ class DecodeAlogTest(unittest.TestCase):
         self.assertEqual("hello", rows[0]["msg"])
         self.assertEqual("INFO", rows[0]["level"])
 
+    def test_decodes_plain_jsonl(self):
+        raw = b'{"ts":1,"level":"I","type":"code","tag":"T","msg":"plain"}\n'
+        rows = decode_bytes(raw)
+        self.assertEqual("plain", rows[0]["msg"])
+
     def test_decode_file_reads_disk(self):
         path = Path(__file__).with_name("_tmp_decode.alog")
         try:

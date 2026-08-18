@@ -41,6 +41,20 @@ class ALogFacadeTest {
     }
 
     @Test
+    fun doesNotCaptureCallerOrStack() {
+        val config = LogConfiguration.Builder()
+            .enableStackTrace(4)
+            .enableThreadInfo()
+            .build()
+        ALog.init(config, printer)
+        ALog.i("basic")
+        assertEquals("", captured[0].file)
+        assertEquals(0, captured[0].line)
+        assertEquals("", captured[0].stackTrace)
+        assertTrue(captured[0].threadName.isNotEmpty())
+    }
+
+    @Test
     fun typeOverride() {
         ALog.init(LogConfiguration.Builder().build(), printer)
         ALog.t(LogType.NETWORK).e("Http", "timeout")

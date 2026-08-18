@@ -39,7 +39,6 @@ class Logger internal constructor(
     private fun println(level: Int, tag: String, msg: String, tr: Throwable?) {
         if (level < config.logLevel) return
         val resolvedTag = tagOverride ?: tag
-        val caller = CallerLocator.locate()
         var item = LogItem(
             level = level,
             type = type,
@@ -50,14 +49,7 @@ class Logger internal constructor(
             pid = ProcessInfo.pid,
             tid = Thread.currentThread().id,
             process = ProcessInfo.processName,
-            file = caller.first,
-            line = caller.second,
             threadName = if (config.threadInfo) Thread.currentThread().name else "",
-            stackTrace = if (config.stackTraceDepth > 0) {
-                CallerLocator.stack(config.stackTraceDepth)
-            } else {
-                ""
-            },
         )
         for (interceptor in config.interceptors) {
             item = interceptor.intercept(item) ?: return

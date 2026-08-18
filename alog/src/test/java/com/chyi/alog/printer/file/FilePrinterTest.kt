@@ -31,6 +31,7 @@ class FilePrinterTest {
         assertEquals(1, lines.size)
         assertTrue(lines[0].contains("\"msg\":\"hello\""))
         assertTrue(lines[0].contains("\"tag\":\"T\""))
+        assertTrue(!lines[0].contains("\"pid\""))
         assertTrue(!lines[0].contains("┌"))
     }
 }

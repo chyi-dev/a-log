@@ -13,6 +13,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.chyi.alog.ALog
+import com.chyi.alog.ALogPaths
 import com.chyi.alog.LogConfiguration
 import com.chyi.alog.LogLevel
 import com.chyi.alog.LogType
@@ -28,6 +29,8 @@ import java.util.UUID
 class ALogApp : Application() {
     lateinit var logDir: File
         private set
+    lateinit var alogCacheDir: File
+        private set
     lateinit var publicKeyPem: String
         private set
     private var filePrinter: FilePrinter? = null
@@ -37,10 +40,15 @@ class ALogApp : Application() {
         ProcessInfo.pid = Process.myPid()
         ProcessInfo.processName = currentProcessName()
         publicKeyPem = assets.open("alog_public.pem").bufferedReader().readText()
-        logDir = File(filesDir, "alog/${ProcessInfo.processName.replace(':', '_')}")
+        logDir = File(filesDir, "alog")
+        alogCacheDir = ALogPaths.cacheRoot(filesDir)
+        val namePrefix = ALogPaths.namePrefix(ProcessInfo.processName, packageName)
         logDir.mkdirs()
+        alogCacheDir.mkdirs()
         filePrinter = FilePrinter.Builder(logDir)
-            .namePrefix("alog")
+            .namePrefix(namePrefix)
+            .cacheDir(alogCacheDir)
+            .writerMode(com.chyi.alog.printer.file.WriterMode.MMAP)
             .encrypt(!BuildConfig.DEBUG)
             .publicKeyPem(publicKeyPem)
             .keyId("dev-1")
@@ -75,7 +83,6 @@ class ALogApp : Application() {
             .logLevel(if (BuildConfig.DEBUG) LogLevel.ALL else LogLevel.INFO)
             .tag("ALog")
             .enableThreadInfo()
-            .enableStackTrace(1)
             .enableBorder()
             .addInterceptor(PrivacyInterceptor())
             .build()
@@ -88,10 +95,13 @@ class ALogApp : Application() {
         ALog.i("ALog ready console=$console file=$file process=${ProcessInfo.processName}")
     }
 
+    fun droppedCount(): Int = filePrinter?.droppedCount() ?: 0
+
     fun enqueueUpload(reason: String) {
         val network = if (reason == "manual") NetworkType.CONNECTED else NetworkType.UNMETERED
         val data = workDataOf(
-            UploadWorker.KEY_DIR to File(filesDir, "alog").absolutePath,
+            UploadWorker.KEY_DIR to logDir.absolutePath,
+            UploadWorker.KEY_CACHE_DIR to alogCacheDir.absolutePath,
             UploadWorker.KEY_URL to "http://192.168.1.70:8080",
             UploadWorker.KEY_TOKEN to "alog-dev",
             UploadWorker.KEY_REASON to reason,

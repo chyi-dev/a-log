@@ -11,12 +11,7 @@ class JsonLineFlattener : Flattener {
             "\"ts\":${item.ts}," +
             "\"level\":\"${LogLevel.nameOf(item.level)}\"," +
             "\"type\":\"${LogType.nameOf(item.type)}\"," +
-            "\"pid\":${item.pid}," +
-            "\"tid\":${item.tid}," +
-            "\"process\":\"${escape(item.process)}\"," +
             "\"tag\":\"${escape(item.tag)}\"," +
-            "\"file\":\"${escape(item.file)}\"," +
-            "\"line\":${item.line}," +
             "\"msg\":\"$msg\"" +
             "}"
     }

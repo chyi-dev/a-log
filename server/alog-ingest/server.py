@@ -76,6 +76,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._list_fetch_tasks(parse_qs(parsed.query))
         if parsed.path == "/logs/fetch-pending":
             return self._pending_fetch_tasks(parse_qs(parsed.query))
+        m = re.match(r"/logs/tasks/([^/]+)/details/summary$", parsed.path)
+        if m:
+            return self._details_summary(m.group(1), parse_qs(parsed.query))
         m = re.match(r"/logs/tasks/([^/]+)/details$", parsed.path)
         if m:
             return self._details(m.group(1), parse_qs(parsed.query))
@@ -126,6 +129,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _init_upload(self) -> None:
         body = json_body(self)
+        files_in = body.get("files") or []
+        if not files_in:
+            return self._send(400, {"error": "files required"})
         upload_id = "u-" + uuid.uuid4().hex[:12]
         record = {
             "uploadId": upload_id,
@@ -134,7 +140,7 @@ class Handler(BaseHTTPRequestHandler):
             "files": [],
         }
         files_out = []
-        for item in body.get("files", []):
+        for item in files_in:
             file_id = "f-" + uuid.uuid4().hex[:12]
             digest = item.get("sha256")
             skip = False
@@ -182,11 +188,17 @@ class Handler(BaseHTTPRequestHandler):
         if record.get("status") == "done" and record.get("details") and not force:
             return None
         upload_id = record["uploadId"]
+        items = record.get("files") or []
         assembled_dir = os.path.join(DATA, "files", upload_id)
+        if not items:
+            record["status"] = "done"
+            record["details"] = []
+            self._save_task(record)
+            return None
         os.makedirs(assembled_dir, exist_ok=True)
         details = []
         used_names = set()
-        for item in record.get("files") or []:
+        for item in items:
             path = None
             if item.get("skip"):
                 path = self._find_file_by_hash(item.get("sha256"))
@@ -290,17 +302,23 @@ class Handler(BaseHTTPRequestHandler):
         if not task.get("details"):
             self._assemble_and_decode(task, force=True)
             task = self._load_task(upload_id) or task
-        typ = (query.get("type") or [None])[0]
-        q = (query.get("q") or [""])[0]
+        rows = filter_detail_rows(task.get("details") or [], query)
+        if (query.get("summary") or [""])[0] in ("1", "true"):
+            return self._send(200, summarize_rows(rows, query))
         page = int((query.get("page") or ["0"])[0])
         size = int((query.get("size") or ["200"])[0])
-        rows = task.get("details") or []
-        if typ:
-            rows = [r for r in rows if str(r.get("type")) == typ]
-        if q:
-            rows = [r for r in rows if q in json.dumps(r, ensure_ascii=False)]
         start = page * size
         self._send(200, {"total": len(rows), "items": rows[start:start + size]})
+
+    def _details_summary(self, upload_id: str, query: dict) -> None:
+        task = self._load_task(upload_id)
+        if not task:
+            return self._send(404, {"error": "unknown task"})
+        if not task.get("details"):
+            self._assemble_and_decode(task, force=True)
+            task = self._load_task(upload_id) or task
+        rows = filter_detail_rows(task.get("details") or [], query)
+        self._send(200, summarize_rows(rows, query))
 
     def _create_fetch_task(self) -> None:
         body = json_body(self)
@@ -408,6 +426,49 @@ class Handler(BaseHTTPRequestHandler):
                 tasks.append(json.load(f))
         tasks.sort(key=lambda t: t.get("createdAt") or 0, reverse=True)
         return tasks
+
+
+def _query_first(query: dict, key: str, default=None):
+    values = query.get(key) or [default]
+    return values[0]
+
+
+def filter_detail_rows(rows: list, query: dict) -> list:
+    typ = _query_first(query, "type")
+    tag = _query_first(query, "tag")
+    q = _query_first(query, "q", "") or ""
+    from_ts = _query_first(query, "fromTs")
+    to_ts = _query_first(query, "toTs")
+    from_ms = int(from_ts) if from_ts not in (None, "") else None
+    to_ms = int(to_ts) if to_ts not in (None, "") else None
+    out = rows
+    if typ:
+        out = [r for r in out if str(r.get("type")) == typ]
+    if tag:
+        out = [r for r in out if str(r.get("tag")) == tag]
+    if q:
+        out = [r for r in out if q in json.dumps(r, ensure_ascii=False)]
+    if from_ms is not None:
+        out = [r for r in out if int(r.get("ts") or 0) >= from_ms]
+    if to_ms is not None:
+        out = [r for r in out if int(r.get("ts") or 0) <= to_ms]
+    return out
+
+
+def summarize_rows(rows: list, query: dict) -> dict:
+    bucket = int(_query_first(query, "bucket", "60000") or 60000)
+    if bucket <= 0:
+        bucket = 60000
+    grouped = {}
+    for row in rows:
+        ts = int(row.get("ts") or 0)
+        key = (ts // bucket) * bucket
+        item = grouped.setdefault(key, {"bucketMs": key, "count": 0, "levels": {}})
+        item["count"] += 1
+        lv = str(row.get("level") or "?")
+        item["levels"][lv] = item["levels"].get(lv, 0) + 1
+    buckets = [grouped[k] for k in sorted(grouped)]
+    return {"bucket": bucket, "buckets": buckets}
 
 
 def main() -> None:

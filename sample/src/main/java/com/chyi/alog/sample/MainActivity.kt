@@ -61,6 +61,9 @@ class MainActivity : AppCompatActivity() {
         binding.btnReplay.setOnClickListener {
             replayBusinessLog()
         }
+        binding.btnStress.setOnClickListener {
+            stressLimit()
+        }
         binding.btnCrash.setOnClickListener {
             throw RuntimeException("sample crash for ALog")
         }
@@ -85,7 +88,33 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    private fun stressLimit() {
+        toast("stress…")
+        Thread {
+            val payload = "x".repeat(64)
+            val threads = 4
+            val perThread = 20_000
+            val start = System.nanoTime()
+            val workers = (1..threads).map {
+                Thread {
+                    repeat(perThread) { ALog.i(payload) }
+                }.also { it.start() }
+            }
+            workers.forEach { it.join() }
+            val writeMs = (System.nanoTime() - start) / 1_000_000
+            val flushStart = System.nanoTime()
+            ALog.flush(true)
+            val flushMs = (System.nanoTime() - flushStart) / 1_000_000
+            val attempted = threads * perThread
+            val dropped = app.droppedCount()
+            runOnUiThread {
+                toast("attempted=$attempted dropped=$dropped writeMs=$writeMs flushMs=$flushMs")
+            }
+        }.start()
+    }
+
     private fun toast(msg: String) {
+        ALog.i(msg)
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 }

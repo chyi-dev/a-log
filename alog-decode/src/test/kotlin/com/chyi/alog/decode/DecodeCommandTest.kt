@@ -19,4 +19,12 @@ class DecodeCommandTest {
         val lines = DecodeCommand.decodeFile(file, null)
         assertTrue(lines.isEmpty() || lines.any { it.contains("ok") })
     }
+
+    @Test
+    fun decodesPlainJsonl() {
+        val file = tmp.newFile("plain.alog")
+        file.writeText("{\"ts\":1,\"level\":\"I\",\"type\":\"code\",\"tag\":\"T\",\"msg\":\"plain\"}\n")
+        val lines = DecodeCommand.decodeFile(file, null)
+        assertTrue(lines.any { it.contains("plain") })
+    }
 }

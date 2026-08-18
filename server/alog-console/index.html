@@ -14,6 +14,10 @@
     .panel { margin-top: 24px; padding-top: 8px; border-top: 1px solid #ddd; }
     .ok { color: #0a0; }
     .err { color: #c00; }
+    .timeline { display: flex; align-items: flex-end; height: 80px; gap: 2px; margin: 8px 0 12px; overflow-x: auto; }
+    .tbar { min-width: 8px; background: #4a90d9; cursor: pointer; }
+    .tbar:hover { background: #2c6cb0; }
+    .row-open pre { margin: 4px 0 0; max-height: 160px; }
   </style>
 </head>
 <body>
@@ -26,17 +30,6 @@
     <label>API <input id="apiBase" size="32" /></label>
     <label>unionId <input id="unionId" value="demo-user" /></label>
     <label>deviceId <input id="deviceId" /></label>
-    <label>type
-      <select id="type">
-        <option value="">all</option>
-        <option>code</option>
-        <option>network</option>
-        <option>action</option>
-        <option>crash</option>
-        <option>internal</option>
-      </select>
-    </label>
-    <label>q <input id="q" /></label>
     <button id="btnLoad">加载上传任务</button>
   </div>
   <table>
@@ -47,6 +40,23 @@
   <div class="panel">
     <h2>已上传日志（解密）</h2>
     <p id="detailMeta">选择任务后解密显示</p>
+    <div>
+      <label>type
+        <select id="detailType">
+          <option value="">all</option>
+          <option>code</option>
+          <option>network</option>
+          <option>action</option>
+          <option>crash</option>
+          <option>internal</option>
+        </select>
+      </label>
+      <label>tag <input id="detailTag" /></label>
+      <label>q <input id="detailQ" /></label>
+      <button id="btnApplyFilter">筛选</button>
+      <button id="btnClearTime">清除时间轴筛选</button>
+    </div>
+    <div id="timeline" class="timeline"></div>
     <div>
       <button id="btnPrev" disabled>上一页</button>
       <button id="btnNext" disabled>下一页</button>
@@ -144,9 +154,13 @@
     let currentUploadId = "";
     let currentPage = 0;
     let currentTotal = 0;
+    let filterFromTs = "";
+    let filterToTs = "";
     async function openDetails(id, decode) {
       currentUploadId = id;
       currentPage = 0;
+      filterFromTs = "";
+      filterToTs = "";
       if (decode) {
         const meta = document.getElementById("detailMeta");
         meta.textContent = "正在解密 " + id + " …";
@@ -159,16 +173,48 @@
       }
       await loadDetailsPage();
     }
+    function detailQuery(extra, includeTime) {
+      const qs = new URLSearchParams();
+      const typ = document.getElementById("detailType").value;
+      const tag = document.getElementById("detailTag").value.trim();
+      const q = document.getElementById("detailQ").value;
+      if (typ) qs.set("type", typ);
+      if (tag) qs.set("tag", tag);
+      if (q) qs.set("q", q);
+      if (includeTime !== false) {
+        if (filterFromTs) qs.set("fromTs", filterFromTs);
+        if (filterToTs) qs.set("toTs", filterToTs);
+      }
+      if (extra) Object.keys(extra).forEach((k) => qs.set(k, extra[k]));
+      return qs;
+    }
+    async function loadTimeline() {
+      const box = document.getElementById("timeline");
+      box.innerHTML = "";
+      if (!currentUploadId) return;
+      const data = await api("/logs/tasks/" + currentUploadId + "/details/summary?" + detailQuery({ bucket: "60000" }, false).toString());
+      const buckets = data.buckets || [];
+      const max = Math.max(1, ...buckets.map((b) => b.count || 0));
+      for (const b of buckets) {
+        const bar = document.createElement("div");
+        bar.className = "tbar";
+        bar.style.height = Math.max(4, Math.round(76 * (b.count / max))) + "px";
+        const err = (b.levels && (b.levels.E || b.levels.ERROR)) || 0;
+        if (err) bar.style.background = "#c44";
+        bar.title = fmtTs(b.bucketMs) + "  " + b.count + " 条";
+        bar.onclick = async () => {
+          filterFromTs = String(b.bucketMs);
+          filterToTs = String(b.bucketMs + (data.bucket || 60000) - 1);
+          currentPage = 0;
+          await loadDetailsPage();
+        };
+        box.appendChild(bar);
+      }
+    }
     async function loadDetailsPage() {
       if (!currentUploadId) return;
-      const typ = document.getElementById("type").value;
-      const q = document.getElementById("q").value;
       const size = Math.max(1, Number(document.getElementById("pageSize").value) || 200);
-      const qs = new URLSearchParams();
-      if (typ) qs.set("type", typ);
-      if (q) qs.set("q", q);
-      qs.set("page", String(currentPage));
-      qs.set("size", String(size));
+      const qs = detailQuery({ page: String(currentPage), size: String(size) });
       const data = await api("/logs/tasks/" + currentUploadId + "/details?" + qs.toString());
       currentTotal = data.total || 0;
       const pages = Math.max(1, Math.ceil(currentTotal / size) || 1);
@@ -186,8 +232,24 @@
         tr.innerHTML =
           `<td>${fmtTs(row.ts)}</td><td>${row.level || ""}</td><td>${row.type || ""}</td>` +
           `<td>${row.tag || ""}</td><td class="msg">${escapeHtml(row.msg || JSON.stringify(row))}</td>`;
+        tr.style.cursor = "pointer";
+        tr.onclick = () => {
+          const next = tr.nextSibling;
+          if (next && next.classList && next.classList.contains("row-open")) {
+            next.remove();
+            return;
+          }
+          const open = document.createElement("tr");
+          open.className = "row-open";
+          const td = document.createElement("td");
+          td.colSpan = 5;
+          td.innerHTML = "<pre>" + escapeHtml(JSON.stringify(row, null, 2)) + "</pre>";
+          open.appendChild(td);
+          tr.parentNode.insertBefore(open, tr.nextSibling);
+        };
         tb.appendChild(tr);
       }
+      await loadTimeline();
     }
     document.getElementById("btnPrev").onclick = async () => {
       if (currentPage > 0) {
@@ -203,14 +265,20 @@
       currentPage = 0;
       await loadDetailsPage();
     };
-    document.getElementById("type").onchange = async () => {
+    document.getElementById("btnApplyFilter").onclick = async () => {
       currentPage = 0;
       await loadDetailsPage();
     };
-    document.getElementById("q").addEventListener("change", async () => {
+    document.getElementById("btnClearTime").onclick = async () => {
+      filterFromTs = "";
+      filterToTs = "";
       currentPage = 0;
       await loadDetailsPage();
-    });
+    };
+    document.getElementById("detailType").onchange = async () => {
+      currentPage = 0;
+      await loadDetailsPage();
+    };
     function escapeHtml(s) {
       return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     }

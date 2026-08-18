@@ -11,5 +11,6 @@
     <string name="btn_fetch">模拟回捞</string>
     <string name="btn_crash">制造崩溃</string>
     <string name="btn_replay">重放业务日志</string>
+    <string name="btn_stress">极限压测</string>
     <string name="force_stop_hint">force-stop 验收：先打日志，再执行 adb shell am force-stop com.chyi.alog.sample，重开 App 后用 decode-cli 解 files/alog/ 下的 .alog。不要先点 flush。</string>
 </resources>
