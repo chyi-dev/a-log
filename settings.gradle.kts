@@ -20,7 +20,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "a-log"
-include(":alog-format")
 include(":alog")
 include(":alog-decode")
+include(":alog-upload")
 include(":sample")

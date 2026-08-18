@@ -2,6 +2,8 @@ package com.chyi.alog
 
 import com.chyi.alog.printer.Printer
 import com.chyi.alog.printer.PrinterSet
+import com.chyi.alog.store.MmapLogWriter
+import java.io.File
 
 object ALog {
     @Volatile
@@ -77,6 +79,33 @@ object ALog {
     fun flush(sync: Boolean) {
         assertInit()
         printer.flush(sync)
+    }
+
+    @JvmStatic
+    fun prepareForUpload(
+        logRoot: File,
+        cacheRoot: File,
+        livePids: Set<Int>,
+        currentPid: Int = 0,
+    ): List<File> {
+        try {
+            if (initialized) flush(true)
+        } catch (_: Throwable) {
+        }
+        MmapLogWriter.recoverOrphans(logRoot, cacheRoot, livePids, currentPid)
+        return collectAlogFiles(logRoot)
+    }
+
+    @JvmStatic
+    fun collectAlogFiles(logRoot: File): List<File> {
+        if (!logRoot.isDirectory) return emptyList()
+        val out = mutableListOf<File>()
+        logRoot.listFiles { f -> f.isFile && f.name.endsWith(".alog") }?.let { out.addAll(it) }
+        val dirs = logRoot.listFiles { f -> f.isDirectory } ?: emptyArray()
+        for (dir in dirs) {
+            dir.listFiles { f -> f.isFile && f.name.endsWith(".alog") }?.let { out.addAll(it) }
+        }
+        return out.sortedBy { it.absolutePath }
     }
 
     internal fun resetForTest() {

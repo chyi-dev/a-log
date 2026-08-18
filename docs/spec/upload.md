@@ -1,5 +1,20 @@
 # 上传协议
 
+客户端实现在 **`:alog-upload`**，不打进 `:alog`。只读已封块的 `.alog` 原始字节，不解密、不解压。解码在 ingest 或 `:alog-decode`。
+
+业务接入：
+
+```kotlin
+implementation(project(":alog"))
+implementation(project(":alog-upload"))
+
+ALogUpload.enqueue(context, UploadConfig(logDir, cacheDir, baseUrl, token, meta), reason)
+```
+
+`reason`：`manual`（允许蜂窝）/ `fetch`（默认非计费网络）/ 预留 `crash`。用户同意前不得上传。
+
+上传前由 `:alog` 的 `ALog.prepareForUpload` 做 flush 与死进程 mmap 回收。选文件：仅 `.alog`；`logRoot` + 一级子目录；按修改时间新到旧；默认最近 2 天（`recentDays=null` 关闭窗口）；累计不超过 50MB，超出则 `truncated=true`。不上传 `.mm`。
+
 Base URL 由客户端配置，sample 默认同网段 `http://10.0.2.2:8080`（模拟器）。
 
 鉴权：Header `Authorization: Bearer <token>`，内网演示 token 为 `alog-dev`。

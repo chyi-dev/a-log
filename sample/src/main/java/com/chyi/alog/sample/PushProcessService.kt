@@ -5,7 +5,7 @@ import android.content.Intent
 import android.os.IBinder
 import com.chyi.alog.ALog
 import com.chyi.alog.LogType
-import com.chyi.alog.upload.FlushIntents
+import com.chyi.alog.FlushIntents
 
 class PushProcessService : Service() {
     override fun onCreate() {

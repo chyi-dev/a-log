@@ -40,6 +40,7 @@ android {
 
 dependencies {
     implementation(project(":alog"))
+    implementation(project(":alog-upload"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.google.material)

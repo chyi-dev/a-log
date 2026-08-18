@@ -7,11 +7,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Process
 import android.util.Log
-import androidx.work.Constraints
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.chyi.alog.ALog
 import com.chyi.alog.ALogPaths
 import com.chyi.alog.LogConfiguration
@@ -20,7 +15,9 @@ import com.chyi.alog.ProcessInfo
 import com.chyi.alog.interceptor.PrivacyInterceptor
 import com.chyi.alog.printer.AndroidPrinter
 import com.chyi.alog.printer.file.FilePrinter
-import com.chyi.alog.upload.UploadWorker
+import com.chyi.alog.upload.ALogUpload
+import com.chyi.alog.upload.UploadConfig
+import com.chyi.alog.upload.UploadMeta
 import java.io.File
 import java.util.UUID
 
@@ -91,25 +88,24 @@ class ALogApp : Application() {
     fun droppedCount(): Int = filePrinter?.droppedCount() ?: 0
 
     fun enqueueUpload(reason: String) {
-        val network = if (reason == "manual") NetworkType.CONNECTED else NetworkType.UNMETERED
-        val data = workDataOf(
-            UploadWorker.KEY_DIR to logDir.absolutePath,
-            UploadWorker.KEY_CACHE_DIR to alogCacheDir.absolutePath,
-            UploadWorker.KEY_URL to "http://192.168.1.70:8080",
-            UploadWorker.KEY_TOKEN to "alog-dev",
-            UploadWorker.KEY_REASON to reason,
-            UploadWorker.KEY_APP_ID to packageName,
-            UploadWorker.KEY_UNION to "demo-user",
-            UploadWorker.KEY_DEVICE to deviceId(),
-            UploadWorker.KEY_APP_VER to BuildConfig.VERSION_NAME,
-            UploadWorker.KEY_BUILD_VER to BuildConfig.VERSION_CODE.toString(),
+        ALogUpload.enqueue(
+            this,
+            UploadConfig(
+                logDir = logDir,
+                cacheDir = alogCacheDir,
+                baseUrl = "http://192.168.1.70:8080",
+                token = "alog-dev",
+                meta = UploadMeta(
+                    appId = packageName,
+                    unionId = "demo-user",
+                    deviceId = deviceId(),
+                    appVer = BuildConfig.VERSION_NAME,
+                    buildVer = BuildConfig.VERSION_CODE.toString(),
+                ),
+            ),
+            reason,
         )
-        val request = OneTimeWorkRequestBuilder<UploadWorker>()
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(network).build())
-            .setInputData(data)
-            .build()
-        WorkManager.getInstance(this).enqueue(request)
-        ALog.i("upload enqueued reason=$reason network=$network")
+        ALog.i("upload enqueued reason=$reason")
     }
 
     private fun flushQuietly() {

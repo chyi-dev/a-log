@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.chyi.alog"
+    namespace = "com.chyi.alog.upload"
     compileSdk = 34
 
     defaultConfig {
@@ -23,6 +23,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":alog"))
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.core.ktx)
     testImplementation(libs.junit)
 }
