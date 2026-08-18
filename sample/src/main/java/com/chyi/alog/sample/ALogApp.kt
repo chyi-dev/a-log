@@ -37,7 +37,7 @@ class ALogApp : Application() {
         ProcessInfo.pid = Process.myPid()
         ProcessInfo.processName = currentProcessName()
         publicKeyPem = assets.open("alog_public.pem").bufferedReader().readText()
-        logDir = File(filesDir, "alog")
+        logDir = File(filesDir, "alog/${ProcessInfo.processName.replace(':', '_')}")
         logDir.mkdirs()
         filePrinter = FilePrinter.Builder(logDir)
             .namePrefix("alog")

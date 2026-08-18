@@ -9,14 +9,17 @@ object ProcessLogCollector {
             ALog.flush(true)
         } catch (_: Throwable) {
         }
-        return collectRootAlogFiles(alogRoot)
+        return collectAlogFiles(alogRoot)
     }
 
-    fun collectRootAlogFiles(alogRoot: File): List<File> {
+    fun collectAlogFiles(alogRoot: File): List<File> {
         if (!alogRoot.isDirectory) return emptyList()
-        return alogRoot.listFiles { f -> f.isFile && f.name.endsWith(".alog") }
-            ?.sortedBy { it.name }
-            ?.toList()
-            .orEmpty()
+        val out = mutableListOf<File>()
+        alogRoot.listFiles { f -> f.isFile && f.name.endsWith(".alog") }?.let { out.addAll(it) }
+        val dirs = alogRoot.listFiles { f -> f.isDirectory } ?: emptyArray()
+        for (dir in dirs) {
+            dir.listFiles { f -> f.isFile && f.name.endsWith(".alog") }?.let { out.addAll(it) }
+        }
+        return out.sortedBy { it.absolutePath }
     }
 }
