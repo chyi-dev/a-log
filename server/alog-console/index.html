@@ -2,96 +2,441 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <title>ALog console</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ALog 控制台</title>
   <style>
-    body { font-family: sans-serif; margin: 16px; }
-    label { margin-right: 8px; display: inline-block; margin-bottom: 6px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
-    th, td { border: 1px solid #ccc; padding: 6px; font-size: 13px; vertical-align: top; }
-    pre { background: #111; color: #eee; padding: 8px; overflow: auto; max-height: 240px; }
-    button { margin: 4px 4px 4px 0; }
-    .msg { max-width: 640px; word-break: break-all; }
-    .panel { margin-top: 24px; padding-top: 8px; border-top: 1px solid #ddd; }
-    .ok { color: #0a0; }
-    .err { color: #c00; }
-    .timeline { display: flex; align-items: flex-end; height: 80px; gap: 2px; margin: 8px 0 12px; overflow-x: auto; }
-    .tbar { min-width: 8px; background: #4a90d9; cursor: pointer; }
-    .tbar:hover { background: #2c6cb0; }
-    .row-open pre { margin: 4px 0 0; max-height: 160px; }
+    :root {
+      --bg: #f4f6f9;
+      --card: #fff;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --radius: 10px;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .topbar {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+    }
+
+    .topbar-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .topbar h1 {
+      margin: 0 0 4px;
+      font-size: 1.35rem;
+      font-weight: 600;
+    }
+
+    .topbar .hint {
+      margin: 0;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .topbar code {
+      background: var(--bg);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.82rem;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 20px 24px;
+      margin-bottom: 24px;
+    }
+
+    .card:last-child { margin-bottom: 0; }
+
+    .card-active {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 1px var(--primary), var(--shadow);
+    }
+
+    .card-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px 16px;
+      margin-bottom: 16px;
+    }
+
+    .card-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .card-desc {
+      margin: 0 0 16px;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: flex-end;
+      margin-bottom: 16px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .field input,
+    .field select {
+      min-width: 140px;
+      height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.875rem;
+      color: var(--text);
+      background: var(--card);
+    }
+
+    .field input:focus,
+    .field select:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px 16px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 768px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .container { padding: 16px; }
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 36px;
+      padding: 0 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      background: var(--card);
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .btn:hover:not(:disabled) { background: var(--bg); }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+
+    .btn-ghost {
+      background: transparent;
+    }
+
+    .btn-sm {
+      height: 30px;
+      padding: 0 10px;
+      font-size: 0.8rem;
+    }
+
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: flex-end;
+      margin-bottom: 12px;
+    }
+
+    .pagination {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px 12px;
+      margin-bottom: 12px;
+    }
+
+    .pagination .field input { width: 72px; min-width: 72px; }
+
+    .detail-meta {
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .detail-meta strong { color: var(--text); }
+
+    .table-scroll {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.8125rem;
+    }
+
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      background: var(--bg);
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+
+    tbody tr:hover { background: rgba(37, 99, 235, 0.04); }
+
+    tbody tr.clickable { cursor: pointer; }
+
+    .empty-row td {
+      text-align: center;
+      color: var(--muted);
+      padding: 24px;
+    }
+
+    .msg {
+      max-width: 420px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      word-break: break-all;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      background: var(--bg);
+      color: var(--muted);
+    }
+
+    .badge-done {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .badge-pending,
+    .badge-negotiating {
+      background: #f1f5f9;
+      color: #475569;
+    }
+
+    .badge-failed,
+    .badge-error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .level-info, .level-i { color: #2563eb; }
+    .level-debug, .level-d, .level-v, .level-verbose { color: var(--muted); }
+    .level-warn, .level-w, .level-warning { color: #d97706; }
+    .level-error, .level-e, .level-fatal, .level-f { color: #dc2626; }
+
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 12px;
+      border-radius: 6px;
+      overflow: auto;
+      max-height: 240px;
+      font-size: 0.75rem;
+      margin: 0;
+    }
+
+    .row-open td { background: var(--bg); padding: 0 12px 12px; }
+
+    .row-open pre { margin-top: 8px; max-height: 160px; }
+
+    .alert {
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      margin-bottom: 12px;
+    }
+
+    .alert.ok {
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+
+    .alert.err {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+
+    .alert:empty { display: none; }
   </style>
 </head>
 <body>
-  <h1>ALog 控制台</h1>
-  <p>
-    ingest 在 <code>http://127.0.0.1:8080/</code>。不要用 IDE 预览端口 63342 当 API。
-    本页若从 IDE 打开，请求会自动打到 8080。
-  </p>
-  <div>
-    <label>API <input id="apiBase" size="32" /></label>
-    <label>unionId <input id="unionId" value="demo-user" /></label>
-    <label>deviceId <input id="deviceId" /></label>
-    <button id="btnLoad">加载上传任务</button>
-  </div>
-  <table>
-    <thead><tr><th>uploadId</th><th>reason</th><th>unionId</th><th>status</th><th></th></tr></thead>
-    <tbody id="tasks"></tbody>
-  </table>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1>ALog 控制台</h1>
+      <p class="hint">
+        连接 ingest 服务 <code>http://127.0.0.1:8080/</code>。从 IDE 预览打开时 API 会自动指向 8080。
+      </p>
+    </div>
+  </header>
 
-  <div class="panel">
-    <h2>已上传日志（解密）</h2>
-    <p id="detailMeta">选择任务后解密显示</p>
-    <div>
-      <label>type
-        <select id="detailType">
-          <option value="">all</option>
-          <option>code</option>
-          <option>network</option>
-          <option>action</option>
-          <option>internal</option>
-        </select>
-      </label>
-      <label>tag <input id="detailTag" /></label>
-      <label>q <input id="detailQ" /></label>
-      <button id="btnApplyFilter">筛选</button>
-      <button id="btnClearTime">清除时间轴筛选</button>
-      <button id="btnDownloadTxt" disabled>下载 txt</button>
-    </div>
-    <div id="timeline" class="timeline"></div>
-    <div>
-      <button id="btnPrev" disabled>上一页</button>
-      <button id="btnNext" disabled>下一页</button>
-      <label>每页 <input id="pageSize" type="number" value="200" min="1" max="2000" style="width:72px" /></label>
-    </div>
-    <table>
-      <thead>
-        <tr><th>ts</th><th>level</th><th>type</th><th>tag</th><th>msg</th></tr>
-      </thead>
-      <tbody id="logRows"></tbody>
-    </table>
-  </div>
+  <main class="container">
+    <section class="card" id="sectionTasks">
+      <div class="card-header">
+        <h2>上传任务</h2>
+      </div>
+      <div class="toolbar">
+        <label class="field">API<input id="apiBase" size="28" /></label>
+        <label class="field">unionId<input id="unionId" value="demo-user" /></label>
+        <label class="field">deviceId<input id="deviceId" placeholder="可选" /></label>
+        <button id="btnLoad" class="btn btn-primary" type="button">加载上传任务</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>uploadId</th><th>reason</th><th>unionId</th><th>status</th><th>操作</th></tr>
+          </thead>
+          <tbody id="tasks"></tbody>
+        </table>
+      </div>
+    </section>
 
-  <div class="panel">
-    <h2>创建回捞任务</h2>
-    <p>不走 Push：App 点「模拟回捞」时会拉取 pending 任务并上传，再 fetch-ack。</p>
-    <label>unionId <input id="fetchUnion" value="demo-user" /></label>
-    <label>deviceId <input id="fetchDevice" placeholder="可选，空则该用户全部设备" /></label>
-    <label>fromMs <input id="fetchFrom" type="number" /></label>
-    <label>toMs <input id="fetchTo" type="number" /></label>
-    <label>maxBytes <input id="fetchMax" type="number" value="52428800" /></label>
-    <label>level <input id="fetchLevel" placeholder="可选 INFO/ERROR" /></label>
-    <div>
-      <button id="btnCreateFetch">创建回捞任务</button>
-      <button id="btnLoadFetch">刷新回捞列表</button>
-    </div>
-    <p id="fetchHint"></p>
-    <table>
-      <thead><tr><th>taskId</th><th>status</th><th>unionId</th><th>deviceId</th><th>fromMs</th><th>toMs</th><th>maxBytes</th></tr></thead>
-      <tbody id="fetchTasks"></tbody>
-    </table>
-  </div>
+    <section class="card" id="sectionDetail">
+      <div class="card-header">
+        <h2>日志详情</h2>
+        <div id="detailMeta" class="detail-meta">选择任务后解密显示</div>
+      </div>
+      <div class="filter-row">
+        <label class="field">type
+          <select id="detailType">
+            <option value="">all</option>
+            <option>code</option>
+            <option>network</option>
+            <option>action</option>
+            <option>internal</option>
+          </select>
+        </label>
+        <label class="field">tag<input id="detailTag" placeholder="精确匹配" /></label>
+        <label class="field">关键字<input id="detailQ" placeholder="全文搜索" /></label>
+        <button id="btnApplyFilter" class="btn btn-primary" type="button">筛选</button>
+        <button id="btnDownloadTxt" class="btn btn-ghost" type="button" disabled>下载 txt</button>
+      </div>
+      <div class="pagination">
+        <button id="btnPrev" class="btn btn-sm" type="button" disabled>上一页</button>
+        <button id="btnNext" class="btn btn-sm" type="button" disabled>下一页</button>
+        <label class="field">每页<input id="pageSize" type="number" value="200" min="1" max="2000" /></label>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>时间</th><th>level</th><th>type</th><th>tag</th><th>msg</th></tr>
+          </thead>
+          <tbody id="logRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="sectionFetch">
+      <div class="card-header">
+        <h2>回捞任务</h2>
+      </div>
+      <p class="card-desc">不走 Push：App 点「模拟回捞」时会拉取 pending 任务并上传，再 fetch-ack。</p>
+      <div class="form-grid">
+        <label class="field">unionId<input id="fetchUnion" value="demo-user" /></label>
+        <label class="field">deviceId<input id="fetchDevice" placeholder="可选，空则该用户全部设备" /></label>
+        <label class="field">fromMs<input id="fetchFrom" type="number" placeholder="起始毫秒" /></label>
+        <label class="field">toMs<input id="fetchTo" type="number" placeholder="结束毫秒" /></label>
+        <label class="field">maxBytes<input id="fetchMax" type="number" value="52428800" /></label>
+        <label class="field">level<input id="fetchLevel" placeholder="可选 INFO/ERROR" /></label>
+      </div>
+      <div class="btn-group" style="margin-bottom: 12px;">
+        <button id="btnCreateFetch" class="btn btn-primary" type="button">创建回捞任务</button>
+        <button id="btnLoadFetch" class="btn btn-ghost" type="button">刷新列表</button>
+      </div>
+      <p id="fetchHint" class="alert"></p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>taskId</th><th>status</th><th>unionId</th><th>deviceId</th><th>fromMs</th><th>toMs</th><th>maxBytes</th></tr>
+          </thead>
+          <tbody id="fetchTasks"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
 
   <script>
     const TOKEN = "alog-dev";
+
     function defaultApiBase() {
       const saved = localStorage.getItem("alogApiBase");
       if (saved) return saved;
@@ -100,14 +445,17 @@
       }
       return "http://127.0.0.1:8080";
     }
+
     document.getElementById("apiBase").value = defaultApiBase();
     document.getElementById("apiBase").addEventListener("change", () => {
       localStorage.setItem("alogApiBase", document.getElementById("apiBase").value.trim());
     });
+
     function apiUrl(path) {
       const base = document.getElementById("apiBase").value.trim().replace(/\/$/, "");
       return base + path;
     }
+
     async function api(path, method, body) {
       const res = await fetch(apiUrl(path), {
         method: method || "GET",
@@ -121,6 +469,7 @@
       if (!res.ok) throw new Error(text);
       return text ? JSON.parse(text) : {};
     }
+
     function fmtTs(ts) {
       if (!ts) return "";
       const d = new Date(Number(ts));
@@ -130,61 +479,124 @@
         " " + p(d.getHours(), 2) + ":" + p(d.getMinutes(), 2) + ":" + p(d.getSeconds(), 2) +
         "." + p(d.getMilliseconds(), 3);
     }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+
+    function statusBadge(status) {
+      const s = String(status || "").toLowerCase();
+      let cls = "badge";
+      if (s === "done") cls += " badge-done";
+      else if (s === "pending" || s === "negotiating") cls += " badge-pending";
+      else if (s === "failed" || s === "error") cls += " badge-failed";
+      return `<span class="${cls}">${escapeHtml(status || "")}</span>`;
+    }
+
+    function levelClass(level) {
+      const s = String(level || "").toLowerCase();
+      if (s.startsWith("info") || s === "i") return "level-info";
+      if (s.startsWith("warn") || s === "w") return "level-warn";
+      if (s.startsWith("err") || s === "e" || s.startsWith("fatal") || s === "f") return "level-error";
+      if (s.startsWith("debug") || s === "d" || s.startsWith("verb") || s === "v") return "level-debug";
+      return "";
+    }
+
+    function emptyRow(colspan, text) {
+      const tr = document.createElement("tr");
+      tr.className = "empty-row";
+      tr.innerHTML = `<td colspan="${colspan}">${escapeHtml(text)}</td>`;
+      return tr;
+    }
+
     document.getElementById("btnLoad").onclick = async () => {
-      const u = document.getElementById("unionId").value;
-      const d = document.getElementById("deviceId").value;
-      const qs = new URLSearchParams();
-      if (u) qs.set("unionId", u);
-      if (d) qs.set("deviceId", d);
-      const data = await api("/logs/tasks?" + qs.toString());
-      const tb = document.getElementById("tasks");
-      tb.innerHTML = "";
-      for (const t of data.tasks || []) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${t.uploadId}</td><td>${t.reason || ""}</td><td>${t.unionId || ""}</td><td>${t.status}</td>`;
-        const td = document.createElement("td");
-        const b = document.createElement("button");
-        b.textContent = "解密显示";
-        b.onclick = () => openDetails(t.uploadId, true);
-        td.appendChild(b);
-        const dl = document.createElement("button");
-        dl.textContent = "下载 txt";
-        dl.onclick = async () => {
-          try {
-            await downloadLegacyTxt(t.uploadId);
-          } catch (e) {
-            document.getElementById("detailMeta").textContent = "下载失败: " + e.message;
-          }
-        };
-        td.appendChild(dl);
-        tr.appendChild(td);
-        tb.appendChild(tr);
+      const btn = document.getElementById("btnLoad");
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "加载中…";
+      try {
+        const u = document.getElementById("unionId").value;
+        const d = document.getElementById("deviceId").value;
+        const qs = new URLSearchParams();
+        if (u) qs.set("unionId", u);
+        if (d) qs.set("deviceId", d);
+        const data = await api("/logs/tasks?" + qs.toString());
+        const tb = document.getElementById("tasks");
+        tb.innerHTML = "";
+        const tasks = data.tasks || [];
+        if (!tasks.length) {
+          tb.appendChild(emptyRow(5, "暂无数据"));
+          return;
+        }
+        for (const t of tasks) {
+          const tr = document.createElement("tr");
+          tr.innerHTML =
+            `<td>${escapeHtml(t.uploadId || "")}</td>` +
+            `<td>${escapeHtml(t.reason || "")}</td>` +
+            `<td>${escapeHtml(t.unionId || "")}</td>` +
+            `<td>${statusBadge(t.status)}</td>`;
+          const td = document.createElement("td");
+          td.className = "btn-group";
+          const b = document.createElement("button");
+          b.className = "btn btn-sm btn-primary";
+          b.type = "button";
+          b.textContent = "解密显示";
+          b.onclick = () => openDetails(t.uploadId, true);
+          td.appendChild(b);
+          const dl = document.createElement("button");
+          dl.className = "btn btn-sm btn-ghost";
+          dl.type = "button";
+          dl.textContent = "下载 txt";
+          dl.onclick = async () => {
+            try {
+              await downloadLegacyTxt(t.uploadId);
+            } catch (e) {
+              setDetailMeta("下载失败: " + e.message, true);
+            }
+          };
+          td.appendChild(dl);
+          tr.appendChild(td);
+          tb.appendChild(tr);
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevText;
       }
     };
+
     let currentUploadId = "";
     let currentPage = 0;
     let currentTotal = 0;
-    let filterFromTs = "";
-    let filterToTs = "";
+
+    function setDetailMeta(text, isError) {
+      const el = document.getElementById("detailMeta");
+      el.innerHTML = isError ? escapeHtml(text) : text;
+      if (isError) el.style.color = "#dc2626";
+      else el.style.color = "";
+    }
+
+    function setDetailActive(active) {
+      document.getElementById("sectionDetail").classList.toggle("card-active", active);
+    }
+
     async function openDetails(id, decode) {
       currentUploadId = id;
-      document.getElementById("btnDownloadTxt").disabled = false;
       currentPage = 0;
-      filterFromTs = "";
-      filterToTs = "";
+      document.getElementById("btnDownloadTxt").disabled = false;
+      setDetailActive(true);
       if (decode) {
-        const meta = document.getElementById("detailMeta");
-        meta.textContent = "正在解密 " + id + " …";
+        setDetailMeta("正在解密 <strong>" + escapeHtml(id) + "</strong> …");
         try {
           await api("/logs/tasks/" + id + "/decode", "POST", {});
         } catch (e) {
-          meta.textContent = "解密失败: " + e.message;
+          setDetailMeta("解密失败: " + e.message, true);
           return;
         }
       }
       await loadDetailsPage();
     }
-    function detailQuery(extra, includeTime) {
+
+    function detailQuery(extra) {
       const qs = new URLSearchParams();
       const typ = document.getElementById("detailType").value;
       const tag = document.getElementById("detailTag").value.trim();
@@ -192,36 +604,10 @@
       if (typ) qs.set("type", typ);
       if (tag) qs.set("tag", tag);
       if (q) qs.set("q", q);
-      if (includeTime !== false) {
-        if (filterFromTs) qs.set("fromTs", filterFromTs);
-        if (filterToTs) qs.set("toTs", filterToTs);
-      }
       if (extra) Object.keys(extra).forEach((k) => qs.set(k, extra[k]));
       return qs;
     }
-    async function loadTimeline() {
-      const box = document.getElementById("timeline");
-      box.innerHTML = "";
-      if (!currentUploadId) return;
-      const data = await api("/logs/tasks/" + currentUploadId + "/details/summary?" + detailQuery({ bucket: "60000" }, false).toString());
-      const buckets = data.buckets || [];
-      const max = Math.max(1, ...buckets.map((b) => b.count || 0));
-      for (const b of buckets) {
-        const bar = document.createElement("div");
-        bar.className = "tbar";
-        bar.style.height = Math.max(4, Math.round(76 * (b.count / max))) + "px";
-        const err = (b.levels && (b.levels.E || b.levels.ERROR)) || 0;
-        if (err) bar.style.background = "#c44";
-        bar.title = fmtTs(b.bucketMs) + "  " + b.count + " 条";
-        bar.onclick = async () => {
-          filterFromTs = String(b.bucketMs);
-          filterToTs = String(b.bucketMs + (data.bucket || 60000) - 1);
-          currentPage = 0;
-          await loadDetailsPage();
-        };
-        box.appendChild(bar);
-      }
-    }
+
     async function loadDetailsPage() {
       if (!currentUploadId) return;
       const size = Math.max(1, Number(document.getElementById("pageSize").value) || 200);
@@ -229,21 +615,30 @@
       const data = await api("/logs/tasks/" + currentUploadId + "/details?" + qs.toString());
       currentTotal = data.total || 0;
       const pages = Math.max(1, Math.ceil(currentTotal / size) || 1);
-      if (currentPage >= pages) {
-        currentPage = pages - 1;
-      }
-      document.getElementById("detailMeta").textContent =
-        currentUploadId + " 共 " + currentTotal + " 条 / 第 " + (currentPage + 1) + " / " + pages + " 页";
+      if (currentPage >= pages) currentPage = pages - 1;
+      setDetailMeta(
+        "<strong>" + escapeHtml(currentUploadId) + "</strong> 共 " + currentTotal +
+        " 条 · 第 " + (currentPage + 1) + " / " + pages + " 页"
+      );
       document.getElementById("btnPrev").disabled = currentPage <= 0;
       document.getElementById("btnNext").disabled = currentPage + 1 >= pages;
       const tb = document.getElementById("logRows");
       tb.innerHTML = "";
-      for (const row of data.items || []) {
+      const items = data.items || [];
+      if (!items.length) {
+        tb.appendChild(emptyRow(5, "暂无数据"));
+        return;
+      }
+      for (const row of items) {
         const tr = document.createElement("tr");
+        tr.className = "clickable";
+        const lv = row.level || "";
         tr.innerHTML =
-          `<td>${fmtTs(row.ts)}</td><td>${row.level || ""}</td><td>${row.type || ""}</td>` +
-          `<td>${row.tag || ""}</td><td class="msg">${escapeHtml(row.msg || JSON.stringify(row))}</td>`;
-        tr.style.cursor = "pointer";
+          `<td>${escapeHtml(fmtTs(row.ts))}</td>` +
+          `<td class="${levelClass(lv)}">${escapeHtml(lv)}</td>` +
+          `<td>${escapeHtml(row.type || "")}</td>` +
+          `<td>${escapeHtml(row.tag || "")}</td>` +
+          `<td class="msg" title="${escapeHtml(row.msg || "")}">${escapeHtml(row.msg || JSON.stringify(row))}</td>`;
         tr.onclick = () => {
           const next = tr.nextSibling;
           if (next && next.classList && next.classList.contains("row-open")) {
@@ -260,40 +655,39 @@
         };
         tb.appendChild(tr);
       }
-      await loadTimeline();
     }
+
     document.getElementById("btnPrev").onclick = async () => {
       if (currentPage > 0) {
         currentPage -= 1;
         await loadDetailsPage();
       }
     };
+
     document.getElementById("btnNext").onclick = async () => {
       currentPage += 1;
       await loadDetailsPage();
     };
+
     document.getElementById("pageSize").onchange = async () => {
       currentPage = 0;
       await loadDetailsPage();
     };
+
     document.getElementById("btnApplyFilter").onclick = async () => {
       currentPage = 0;
       await loadDetailsPage();
     };
-    document.getElementById("btnClearTime").onclick = async () => {
-      filterFromTs = "";
-      filterToTs = "";
-      currentPage = 0;
-      await loadDetailsPage();
-    };
+
     document.getElementById("btnDownloadTxt").onclick = async () => {
       if (!currentUploadId) return;
       try {
         await downloadLegacyTxt(currentUploadId);
       } catch (e) {
-        document.getElementById("detailMeta").textContent = "下载失败: " + e.message;
+        setDetailMeta("下载失败: " + e.message, true);
       }
     };
+
     async function downloadLegacyTxt(uploadId) {
       const qs = detailQuery();
       const res = await fetch(apiUrl("/logs/tasks/" + uploadId + "/export.txt?" + qs), {
@@ -307,15 +701,24 @@
       a.click();
       URL.revokeObjectURL(a.href);
     }
+
     document.getElementById("detailType").onchange = async () => {
       currentPage = 0;
       await loadDetailsPage();
     };
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+    function numOrNull(id) {
+      const v = document.getElementById(id).value;
+      return v === "" ? null : Number(v);
     }
-    document.getElementById("btnCreateFetch").onclick = async () => {
+
+    function setFetchHint(text, isError) {
       const hint = document.getElementById("fetchHint");
+      hint.textContent = text || "";
+      hint.className = "alert" + (text ? (isError ? " err" : " ok") : "");
+    }
+
+    document.getElementById("btnCreateFetch").onclick = async () => {
       try {
         const created = await api("/logs/fetch-tasks", "POST", {
           unionId: document.getElementById("fetchUnion").value,
@@ -325,18 +728,13 @@
           maxBytes: numOrNull("fetchMax") || 52428800,
           level: document.getElementById("fetchLevel").value,
         });
-        hint.className = "ok";
-        hint.textContent = "已创建 " + created.taskId + "，请在 App 点「模拟回捞」";
+        setFetchHint("已创建 " + created.taskId + "，请在 App 点「模拟回捞」", false);
         await loadFetchTasks();
       } catch (e) {
-        hint.className = "err";
-        hint.textContent = e.message;
+        setFetchHint(e.message, true);
       }
     };
-    function numOrNull(id) {
-      const v = document.getElementById(id).value;
-      return v === "" ? null : Number(v);
-    }
+
     async function loadFetchTasks() {
       const u = document.getElementById("fetchUnion").value;
       const d = document.getElementById("fetchDevice").value;
@@ -346,19 +744,29 @@
       const data = await api("/logs/fetch-tasks?" + qs.toString());
       const tb = document.getElementById("fetchTasks");
       tb.innerHTML = "";
-      for (const t of data.tasks || []) {
+      const tasks = data.tasks || [];
+      if (!tasks.length) {
+        tb.appendChild(emptyRow(7, "暂无数据"));
+        return;
+      }
+      for (const t of tasks) {
         const tr = document.createElement("tr");
         tr.innerHTML =
-          `<td>${t.taskId}</td><td>${t.status}</td><td>${t.unionId || ""}</td>` +
-          `<td>${t.deviceId || ""}</td><td>${t.fromMs || ""}</td><td>${t.toMs || ""}</td><td>${t.maxBytes || ""}</td>`;
+          `<td>${escapeHtml(t.taskId || "")}</td>` +
+          `<td>${statusBadge(t.status)}</td>` +
+          `<td>${escapeHtml(t.unionId || "")}</td>` +
+          `<td>${escapeHtml(t.deviceId || "")}</td>` +
+          `<td>${escapeHtml(String(t.fromMs ?? ""))}</td>` +
+          `<td>${escapeHtml(String(t.toMs ?? ""))}</td>` +
+          `<td>${escapeHtml(String(t.maxBytes ?? ""))}</td>`;
         tb.appendChild(tr);
       }
     }
+
     document.getElementById("btnLoadFetch").onclick = loadFetchTasks;
+
     loadFetchTasks().catch((e) => {
-      const hint = document.getElementById("fetchHint");
-      hint.className = "err";
-      hint.textContent = "连不上 ingest（请先 python server.py 8080）：" + e.message;
+      setFetchHint("连不上 ingest（请先 python server.py 8080）：" + e.message, true);
     });
   </script>
 </body>
