@@ -73,7 +73,13 @@ class MainActivity : AppCompatActivity() {
             try {
                 assets.open("log_data.txt").bufferedReader().use { reader ->
                     reader.forEachLine { line ->
-                        ALog.i(line)
+                        val parsed = parseBusinessLogLine(line)
+                        if (parsed != null) {
+                            val (tag, msg) = parsed
+                            ALog.t(LogType.BUSINESS_MIN).i(tag, msg)
+                        } else {
+                            ALog.i(line)
+                        }
                         n++
                     }
                 }
@@ -83,6 +89,17 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { toast("replay failed: ${t.message}") }
             }
         }.start()
+    }
+
+    private fun parseBusinessLogLine(line: String): Pair<String, String>? {
+        val m = BUSINESS_LOG_LINE.matchEntire(line.trim()) ?: return null
+        return m.groupValues[1] to m.groupValues[2]
+    }
+
+    companion object {
+        private val BUSINESS_LOG_LINE = Regex(
+            """^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} ([^:]+):(.+)$"""
+        )
     }
 
     private fun stressLimit() {

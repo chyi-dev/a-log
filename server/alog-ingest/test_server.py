@@ -45,6 +45,19 @@ class IngestServerTest(unittest.TestCase):
         parsed = json.loads(text) if text else {}
         return res.status, parsed
 
+    def _raw_get(self, path, auth=True):
+        conn = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {}
+        if auth:
+            headers["Authorization"] = "Bearer alog-dev"
+        conn.request("GET", path, headers=headers)
+        res = conn.getresponse()
+        body = res.read()
+        headers_out = {k.lower(): v for k, v in res.getheaders()}
+        status = res.status
+        conn.close()
+        return status, headers_out, body
+
     def test_create_fetch_task_and_pending_then_ack(self):
         code, created = self._json("POST", "/logs/fetch-tasks", {
             "unionId": "demo-user",
@@ -140,6 +153,43 @@ class IngestServerTest(unittest.TestCase):
         code, summary = self._json("GET", "/logs/tasks/%s/details/summary?bucket=100" % upload_id)
         self.assertEqual(200, code)
         self.assertEqual(3, len(summary["buckets"]))
+
+    def test_export_txt_legacy_format_and_filter(self):
+        upload_id = "u-export"
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        rows = [
+            {"ts": 100, "type": "code", "tag": "Coffee-Machine", "msg": "/dev/ttyS3---发送：AA 55 02 20 21", "level": "info"},
+            {"ts": 200, "type": "network", "tag": "Http", "msg": "GET /ping 200", "level": "info"},
+            {"ts": 300, "type": "code", "tag": "ALog", "msg": "line\nwith\nbreaks", "level": "info"},
+        ]
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "done",
+            "meta": {},
+            "files": [],
+            "details": rows,
+        }), encoding="utf-8")
+
+        status, headers, body = self._raw_get("/logs/tasks/%s/export.txt" % upload_id)
+        self.assertEqual(200, status)
+        self.assertTrue(headers.get("content-type", "").startswith("text/plain"))
+        self.assertIn('filename="u-export.txt"', headers.get("content-disposition", ""))
+        text = body.decode("utf-8")
+        self.assertEqual(server.rows_to_legacy_txt(rows), text)
+        first = text.splitlines()[0]
+        self.assertRegex(first, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} Coffee-Machine:/dev/ttyS3---发送：AA 55 02 20 21$")
+        self.assertIn(" ALog:line with breaks", text)
+
+        status, _, filtered = self._raw_get("/logs/tasks/%s/export.txt?type=code&tag=Coffee-Machine" % upload_id)
+        self.assertEqual(200, status)
+        filtered_text = filtered.decode("utf-8")
+        self.assertEqual(1, len([ln for ln in filtered_text.splitlines() if ln]))
+        self.assertIn("Coffee-Machine:", filtered_text)
+        self.assertNotIn("Http:", filtered_text)
+
+        status, _, _ = self._raw_get("/logs/tasks/%s/export.txt" % upload_id, auth=False)
+        self.assertEqual(401, status)
 
     def test_init_upload_rejects_empty_files(self):
         code, body = self._json("POST", "/logs/uploads", {

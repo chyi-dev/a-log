@@ -54,6 +54,7 @@
       <label>q <input id="detailQ" /></label>
       <button id="btnApplyFilter">筛选</button>
       <button id="btnClearTime">清除时间轴筛选</button>
+      <button id="btnDownloadTxt" disabled>下载 txt</button>
     </div>
     <div id="timeline" class="timeline"></div>
     <div>
@@ -146,6 +147,16 @@
         b.textContent = "解密显示";
         b.onclick = () => openDetails(t.uploadId, true);
         td.appendChild(b);
+        const dl = document.createElement("button");
+        dl.textContent = "下载 txt";
+        dl.onclick = async () => {
+          try {
+            await downloadLegacyTxt(t.uploadId);
+          } catch (e) {
+            document.getElementById("detailMeta").textContent = "下载失败: " + e.message;
+          }
+        };
+        td.appendChild(dl);
         tr.appendChild(td);
         tb.appendChild(tr);
       }
@@ -157,6 +168,7 @@
     let filterToTs = "";
     async function openDetails(id, decode) {
       currentUploadId = id;
+      document.getElementById("btnDownloadTxt").disabled = false;
       currentPage = 0;
       filterFromTs = "";
       filterToTs = "";
@@ -274,6 +286,27 @@
       currentPage = 0;
       await loadDetailsPage();
     };
+    document.getElementById("btnDownloadTxt").onclick = async () => {
+      if (!currentUploadId) return;
+      try {
+        await downloadLegacyTxt(currentUploadId);
+      } catch (e) {
+        document.getElementById("detailMeta").textContent = "下载失败: " + e.message;
+      }
+    };
+    async function downloadLegacyTxt(uploadId) {
+      const qs = detailQuery();
+      const res = await fetch(apiUrl("/logs/tasks/" + uploadId + "/export.txt?" + qs), {
+        headers: { Authorization: "Bearer " + TOKEN },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = uploadId + ".txt";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
     document.getElementById("detailType").onchange = async () => {
       currentPage = 0;
       await loadDetailsPage();

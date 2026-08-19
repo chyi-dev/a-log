@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -46,12 +47,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
-    def _send(self, code: int, body, content_type: str = "application/json") -> None:
+    def _send(self, code: int, body, content_type: str = "application/json", extra_headers=None) -> None:
         data = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        if extra_headers:
+            for key, value in extra_headers.items():
+                self.send_header(key, value)
         self.end_headers()
         self.wfile.write(data)
 
@@ -79,6 +83,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"/logs/tasks/([^/]+)/details/summary$", parsed.path)
         if m:
             return self._details_summary(m.group(1), parse_qs(parsed.query))
+        m = re.match(r"/logs/tasks/([^/]+)/export\.txt$", parsed.path)
+        if m:
+            return self._export_txt(m.group(1), parse_qs(parsed.query))
         m = re.match(r"/logs/tasks/([^/]+)/details$", parsed.path)
         if m:
             return self._details(m.group(1), parse_qs(parsed.query))
@@ -320,6 +327,22 @@ class Handler(BaseHTTPRequestHandler):
         rows = filter_detail_rows(task.get("details") or [], query)
         self._send(200, summarize_rows(rows, query))
 
+    def _export_txt(self, upload_id: str, query: dict) -> None:
+        task = self._load_task(upload_id)
+        if not task:
+            return self._send(404, {"error": "unknown task"})
+        if not task.get("details"):
+            self._assemble_and_decode(task, force=True)
+            task = self._load_task(upload_id) or task
+        rows = filter_detail_rows(task.get("details") or [], query)
+        body = rows_to_legacy_txt(rows).encode("utf-8")
+        self._send(
+            200,
+            body,
+            content_type="text/plain; charset=utf-8",
+            extra_headers={"Content-Disposition": 'attachment; filename="%s.txt"' % upload_id},
+        )
+
     def _create_fetch_task(self) -> None:
         body = json_body(self)
         union = (body.get("unionId") or "").strip()
@@ -431,6 +454,22 @@ class Handler(BaseHTTPRequestHandler):
 def _query_first(query: dict, key: str, default=None):
     values = query.get(key) or [default]
     return values[0]
+
+
+def to_legacy_line(row: dict) -> str:
+    ts = row.get("ts")
+    if ts in (None, ""):
+        ts = 0
+    millis = int(ts)
+    dt = datetime.fromtimestamp(millis / 1000.0)
+    stamp = dt.strftime("%Y-%m-%d %H:%M:%S") + ".%03d" % (millis % 1000)
+    tag = str(row.get("tag") or "ALog")
+    msg = str(row.get("msg") or "").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    return "%s %s:%s" % (stamp, tag, msg)
+
+
+def rows_to_legacy_txt(rows: list) -> str:
+    return "".join(to_legacy_line(row) + "\n" for row in rows)
 
 
 def filter_detail_rows(rows: list, query: dict) -> list:
