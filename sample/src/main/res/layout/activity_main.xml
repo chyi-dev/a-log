@@ -78,6 +78,24 @@
             android:layout_height="wrap_content"
             android:text="@string/btn_stress" />
 
+        <Button
+            android:id="@+id/btn_push_write"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/btn_push_write" />
+
+        <Button
+            android:id="@+id/btn_push_flush"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/btn_push_flush" />
+
+        <Button
+            android:id="@+id/btn_list_files"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/btn_list_files" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

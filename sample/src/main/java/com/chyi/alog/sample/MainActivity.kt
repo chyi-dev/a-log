@@ -64,6 +64,19 @@ class MainActivity : AppCompatActivity() {
         binding.btnStress.setOnClickListener {
             stressLimit()
         }
+        binding.btnPushWrite.setOnClickListener {
+            app.startPushWrite()
+            toast("push write sent")
+        }
+        binding.btnPushFlush.setOnClickListener {
+            app.flushPushProcess()
+            toast("push flush sent")
+        }
+        binding.btnListFiles.setOnClickListener {
+            val summary = app.describeMultiProcessFiles()
+            ALog.i(summary)
+            Toast.makeText(this, summary, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun replayBusinessLog() {

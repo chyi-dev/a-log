@@ -55,4 +55,32 @@ class FileStrategyTest {
         mgr.append("hello".toByteArray())
         assertTrue(File(dir, "fixed.alog").exists())
     }
+
+    @Test
+    fun cleanupDoesNotDeleteOtherProcessPrefix() {
+        val dir = tmp.newFolder("iso")
+        val own = File(dir, "alog_20200101_0.alog").apply {
+            writeText("main")
+            setLastModified(1_000L)
+        }
+        val other = File(dir, "alog_push_20200101_0.alog").apply {
+            writeText("push")
+            setLastModified(1_000L)
+        }
+        val stray = File(dir, "unrelated.alog").apply {
+            writeText("stray")
+            setLastModified(1_000L)
+        }
+        val mgr = LogFileManager(
+            dir = dir,
+            namePrefix = "alog",
+            maxFileSize = 1024,
+            retainDays = 7,
+            maxTotalBytes = 64 * 1024,
+        )
+        mgr.cleanup()
+        assertTrue(!own.exists())
+        assertTrue(other.exists())
+        assertTrue(stray.exists())
+    }
 }

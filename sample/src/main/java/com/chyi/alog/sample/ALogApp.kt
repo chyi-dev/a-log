@@ -9,6 +9,7 @@ import android.os.Process
 import android.util.Log
 import com.chyi.alog.ALog
 import com.chyi.alog.ALogPaths
+import com.chyi.alog.FlushIntents
 import com.chyi.alog.LogConfiguration
 import com.chyi.alog.LogLevel
 import com.chyi.alog.ProcessInfo
@@ -50,7 +51,9 @@ class ALogApp : Application() {
             .onInternal { Log.w("ALogInternal", it) }
             .build()
         initLoggers(console = BuildConfig.DEBUG, file = true)
-        startService(Intent(this, PushProcessService::class.java))
+        if (ProcessInfo.processName == packageName) {
+            startService(Intent(this, PushProcessService::class.java))
+        }
         registerActivityLifecycleCallbacks(FlushLifecycle())
     }
 
@@ -87,7 +90,37 @@ class ALogApp : Application() {
 
     fun droppedCount(): Int = filePrinter?.droppedCount() ?: 0
 
+    fun startPushWrite() {
+        startService(
+            Intent(this, PushProcessService::class.java).setAction(PushProcessService.ACTION_WRITE),
+        )
+    }
+
+    fun flushPushProcess() {
+        startService(
+            Intent(this, PushProcessService::class.java).setAction(FlushIntents.ACTION_FLUSH),
+        )
+    }
+
+    fun describeMultiProcessFiles(): String {
+        try {
+            ALog.flush(true)
+        } catch (_: Throwable) {
+        }
+        val alogs = ALog.collectAlogFiles(logDir).map { it.name }
+        val mms = alogCacheDir.listFiles { f -> f.isFile && f.name.endsWith(".mm") }
+            ?.map { it.name }
+            ?.sorted()
+            .orEmpty()
+        val hasMainAlog = alogs.any { it.matches(Regex("^alog_\\d{8}_\\d+\\.alog$")) }
+        val hasPushAlog = alogs.any { it.matches(Regex("^alog_push_\\d{8}_\\d+\\.alog$")) }
+        val hasMainMm = mms.contains("alog.mm")
+        val hasPushMm = mms.contains("alog_push.mm")
+        return "alog=$alogs mm=$mms mainAlog=$hasMainAlog pushAlog=$hasPushAlog mainMm=$hasMainMm pushMm=$hasPushMm"
+    }
+
     fun enqueueUpload(reason: String) {
+        flushPushProcess()
         ALogUpload.enqueue(
             this,
             UploadConfig(

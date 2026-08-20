@@ -202,6 +202,132 @@ class IngestServerTest(unittest.TestCase):
         self.assertFalse((Path(self.data) / "files").exists())
         self.assertFalse((Path(self.data) / "tasks").exists() and any((Path(self.data) / "tasks").iterdir()))
 
+    def test_multi_file_details_sorted_by_ts(self):
+        upload_id = "u-multiproc"
+        assembled = Path(self.data) / "files" / upload_id
+        assembled.mkdir(parents=True)
+        (assembled / "alog_main.alog").write_bytes(
+            make_unencrypted_alog(['{"ts":200,"level":"INFO","type":"code","tag":"Main","msg":"main"}'])
+        )
+        (assembled / "alog_push.alog").write_bytes(
+            make_unencrypted_alog(['{"ts":100,"level":"INFO","type":"internal","tag":"Push","msg":"push"}'])
+        )
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "negotiating",
+            "meta": {"unionId": "demo-user", "reason": "manual"},
+            "files": [
+                {"fileId": "f-main", "name": "alog_main.alog", "skip": False},
+                {"fileId": "f-push", "name": "alog_push.alog", "skip": False},
+            ],
+        }), encoding="utf-8")
+
+        code, decoded = self._json("POST", "/logs/tasks/%s/decode" % upload_id, {})
+        self.assertEqual(200, code)
+        self.assertGreaterEqual(decoded["lines"], 2)
+
+        code, details = self._json("GET", "/logs/tasks/%s/details" % upload_id)
+        self.assertEqual(200, code)
+        self.assertEqual(["push", "main"], [r["msg"] for r in details["items"]])
+
+        status, _, body = self._raw_get("/logs/tasks/%s/export.txt" % upload_id)
+        self.assertEqual(200, status)
+        lines = [ln for ln in body.decode("utf-8").splitlines() if ln]
+        self.assertEqual(2, len(lines))
+        self.assertIn("Push:push", lines[0])
+        self.assertIn("Main:main", lines[1])
+
+    def test_filter_sorts_legacy_unsorted_details(self):
+        upload_id = "u-legacy-sort"
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        rows = [
+            {"ts": 300, "type": "code", "tag": "Main", "msg": "late-main"},
+            {"ts": 100, "type": "internal", "tag": "Push", "msg": "early-push"},
+            {"ts": 200, "type": "code", "tag": "Main", "msg": "mid-main"},
+        ]
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "done",
+            "meta": {},
+            "files": [],
+            "details": rows,
+        }), encoding="utf-8")
+
+        code, details = self._json("GET", "/logs/tasks/%s/details" % upload_id)
+        self.assertEqual(200, code)
+        self.assertEqual(
+            ["early-push", "mid-main", "late-main"],
+            [r["msg"] for r in details["items"]],
+        )
+
+    def test_skip_files_not_decoded_into_new_task(self):
+        upload_old = "u-old"
+        assembled_old = Path(self.data) / "files" / upload_old
+        assembled_old.mkdir(parents=True)
+        (assembled_old / "old.alog").write_bytes(
+            make_unencrypted_alog(['{"ts":100,"level":"INFO","type":"code","tag":"T","msg":"old-line"}'])
+        )
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        (tasks / (upload_old + ".json")).write_text(json.dumps({
+            "uploadId": upload_old,
+            "status": "done",
+            "meta": {"unionId": "demo-user"},
+            "files": [{"fileId": "f-old", "name": "old.alog", "skip": False}],
+            "details": [{"ts": 100, "msg": "old-line", "type": "code", "tag": "T", "level": "I"}],
+        }), encoding="utf-8")
+
+        upload_new = "u-new"
+        assembled_new = Path(self.data) / "files" / upload_new
+        assembled_new.mkdir(parents=True)
+        (assembled_new / "new.alog").write_bytes(
+            make_unencrypted_alog(['{"ts":200,"level":"INFO","type":"code","tag":"T","msg":"new-line"}'])
+        )
+        (tasks / (upload_new + ".json")).write_text(json.dumps({
+            "uploadId": upload_new,
+            "status": "negotiating",
+            "meta": {"unionId": "demo-user"},
+            "files": [
+                {"fileId": "f-old", "name": "old.alog", "skip": True, "sha256": "deadbeef"},
+                {"fileId": "f-new", "name": "new.alog", "skip": False},
+            ],
+        }), encoding="utf-8")
+
+        code, decoded = self._json("POST", "/logs/tasks/%s/decode" % upload_new, {})
+        self.assertEqual(200, code)
+        self.assertEqual(1, decoded["lines"])
+
+        code, details = self._json("GET", "/logs/tasks/%s/details" % upload_new)
+        self.assertEqual(200, code)
+        msgs = [r["msg"] for r in details["items"]]
+        self.assertEqual(["new-line"], msgs)
+        self.assertNotIn("old-line", msgs)
+
+    def test_all_skip_files_yield_empty_details(self):
+        upload_id = "u-all-skip"
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "negotiating",
+            "meta": {},
+            "files": [
+                {"fileId": "f-1", "name": "a.alog", "skip": True, "sha256": "abc"},
+                {"fileId": "f-2", "name": "b.alog", "skip": True, "sha256": "def"},
+            ],
+        }), encoding="utf-8")
+
+        code, decoded = self._json("POST", "/logs/tasks/%s/decode" % upload_id, {})
+        self.assertEqual(200, code)
+        self.assertEqual(0, decoded["lines"])
+
+        code, details = self._json("GET", "/logs/tasks/%s/details" % upload_id)
+        self.assertEqual(200, code)
+        self.assertEqual([], details["items"])
+
 
 if __name__ == "__main__":
     unittest.main()

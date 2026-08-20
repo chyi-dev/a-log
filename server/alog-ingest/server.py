@@ -206,32 +206,32 @@ class Handler(BaseHTTPRequestHandler):
         details = []
         used_names = set()
         for item in items:
-            path = None
             if item.get("skip"):
-                path = self._find_file_by_hash(item.get("sha256"))
-            else:
-                parts_dir = os.path.join(DATA, "uploads", upload_id, item["fileId"])
-                stored = item.get("storedName")
-                existing = os.path.join(assembled_dir, stored) if stored else os.path.join(assembled_dir, item.get("name") or "")
-                if os.path.isfile(existing) and os.path.getsize(existing) > 0:
-                    path = existing
-                elif os.path.isdir(parts_dir):
-                    parts = sorted(os.listdir(parts_dir), key=lambda n: int(n.split(".")[0]))
-                    blob = b"".join(open(os.path.join(parts_dir, p), "rb").read() for p in parts)
-                    digest = sha256_bytes(blob)
-                    if item.get("sha256") and digest != item["sha256"]:
-                        return 409, {"error": "file sha256 mismatch", "name": item.get("name")}
-                    name = item.get("name") or (item["fileId"] + ".alog")
-                    if name in used_names or os.path.isfile(os.path.join(assembled_dir, name)):
-                        name = item["fileId"] + "_" + name
-                    used_names.add(name)
-                    path = os.path.join(assembled_dir, name)
-                    with open(path, "wb") as f:
-                        f.write(blob)
-                    item["storedName"] = name
-                    self._remember_hash(digest, item["fileId"], path)
+                continue
+            path = None
+            parts_dir = os.path.join(DATA, "uploads", upload_id, item["fileId"])
+            stored = item.get("storedName")
+            existing = os.path.join(assembled_dir, stored) if stored else os.path.join(assembled_dir, item.get("name") or "")
+            if os.path.isfile(existing) and os.path.getsize(existing) > 0:
+                path = existing
+            elif os.path.isdir(parts_dir):
+                parts = sorted(os.listdir(parts_dir), key=lambda n: int(n.split(".")[0]))
+                blob = b"".join(open(os.path.join(parts_dir, p), "rb").read() for p in parts)
+                digest = sha256_bytes(blob)
+                if item.get("sha256") and digest != item["sha256"]:
+                    return 409, {"error": "file sha256 mismatch", "name": item.get("name")}
+                name = item.get("name") or (item["fileId"] + ".alog")
+                if name in used_names or os.path.isfile(os.path.join(assembled_dir, name)):
+                    name = item["fileId"] + "_" + name
+                used_names.add(name)
+                path = os.path.join(assembled_dir, name)
+                with open(path, "wb") as f:
+                    f.write(blob)
+                item["storedName"] = name
+                self._remember_hash(digest, item["fileId"], path)
             if path:
                 details.extend(self._decode(path))
+        details = sort_detail_rows(details)
         record["status"] = "done"
         record["details"] = details
         self._save_task(record)
@@ -491,7 +491,15 @@ def filter_detail_rows(rows: list, query: dict) -> list:
         out = [r for r in out if int(r.get("ts") or 0) >= from_ms]
     if to_ms is not None:
         out = [r for r in out if int(r.get("ts") or 0) <= to_ms]
-    return out
+    return sort_detail_rows(out)
+
+
+def sort_detail_rows(rows: list) -> list:
+    return sorted(rows, key=lambda r: (
+        int(r.get("ts") or 0),
+        str(r.get("tag") or ""),
+        str(r.get("msg") or ""),
+    ))
 
 
 def summarize_rows(rows: list, query: dict) -> dict:

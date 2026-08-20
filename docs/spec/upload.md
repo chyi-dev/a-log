@@ -53,7 +53,7 @@ Return：
 }
 ```
 
-`skip=true` 表示秒传（hash 已存在）。
+`skip=true` 表示秒传（hash 已存在）。秒传文件不会写入该 uploadId 的 `details`（避免重复展示历史日志）；查看旧内容请打开对应历史任务。
 
 ## PUT /logs/uploads/{uploadId}/files/{fileId}/chunks/{index}
 

@@ -56,10 +56,8 @@ open class LogFileManager(
 
     fun cleanup() {
         if (!dir.exists()) return
-        val prefix = "${namePrefix}_"
-        val files = dir.listFiles { f ->
-            f.isFile && f.name.endsWith(".alog") && f.name.startsWith(prefix)
-        }?.toList().orEmpty()
+        val pattern = Regex("^" + Regex.escape(namePrefix) + "_\\d{8}_\\d+\\.alog$")
+        val files = dir.listFiles { f -> f.isFile && pattern.matches(f.name) }?.toList().orEmpty()
         for (file in cleanStrategy.selectForDeletion(files, retainDays, maxTotalBytes)) {
             file.delete()
         }

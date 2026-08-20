@@ -27,7 +27,8 @@
         </activity>
         <service
             android:name=".PushProcessService"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":push" />
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
