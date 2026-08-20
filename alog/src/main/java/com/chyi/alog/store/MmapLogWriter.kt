@@ -234,11 +234,12 @@ class MmapLogWriter(
         val buf = buffer()
         val used = used(buf)
         val bodyStart = ALogDefaults.MMAP_HEADER
-        if (bodyStart + used + bytes.size > mmapSize) {
+        val bodyCap = bodyCapacity()
+        if (used + bytes.size > bodyCap) {
             seal(forceMapped = false)
         }
         val after = used(buf)
-        if (bodyStart + after + bytes.size > mmapSize) {
+        if (after + bytes.size > bodyCap) {
             dropped.incrementAndGet()
             onInternal?.invoke("line larger than mmap body, dropped")
             return
@@ -274,10 +275,17 @@ class MmapLogWriter(
         for (i in 0 until used) {
             body[i] = buf.get(start + i)
         }
+        val effectiveUsed = body.indexOf(0).let { if (it >= 0) it else body.size }
+        if (effectiveUsed <= 0) {
+            resetHeader(buf, 0L, clearBytes = used)
+            if (forceMapped) force()
+            return
+        }
+        val sealedBody = if (effectiveUsed == body.size) body else body.copyOf(effectiveUsed)
         val firstTs = getLong(buf, 12)
         try {
             ensureHeader()
-            var payload = BlockCodec.deflate(body)
+            var payload = BlockCodec.deflate(sealedBody)
             var nonce = ByteArray(0)
             val key = dek()
             if (key != null) {
@@ -290,7 +298,7 @@ class MmapLogWriter(
             dropped.incrementAndGet()
             onInternal?.invoke("disk write failed, drop block: ${t.message}")
         }
-        resetHeader(buf, 0L)
+        resetHeader(buf, 0L, clearBytes = used)
         if (forceMapped) force()
     }
 
@@ -328,7 +336,14 @@ class MmapLogWriter(
         return created
     }
 
-    private fun resetHeader(buf: ByteBuffer, firstTs: Long) {
+    private fun resetHeader(buf: ByteBuffer, firstTs: Long, clearBytes: Int = 0) {
+        if (clearBytes > 0) {
+            val bodyStart = ALogDefaults.MMAP_HEADER
+            val clear = clearBytes.coerceAtMost(bodyCapacity())
+            for (i in 0 until clear) {
+                buf.put(bodyStart + i, 0)
+            }
+        }
         buf.put(0, 'A'.code.toByte())
         buf.put(1, 'L'.code.toByte())
         buf.put(2, 'M'.code.toByte())
@@ -348,7 +363,9 @@ class MmapLogWriter(
             buf.get(3) == 'M'.code.toByte()
     }
 
-    private fun used(buf: ByteBuffer): Int = getInt(buf, 8).coerceAtLeast(0).coerceAtMost(mmapSize)
+    private fun used(buf: ByteBuffer): Int = getInt(buf, 8).coerceAtLeast(0).coerceAtMost(bodyCapacity())
+
+    private fun bodyCapacity(): Int = mmapSize - ALogDefaults.MMAP_HEADER
 
     private fun buffer(): ByteBuffer = mapped ?: heapFallback!!
 

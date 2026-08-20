@@ -4,6 +4,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.zip.CRC32
 
 class MmapLogWriterTest {
     @get:Rule
@@ -45,5 +50,120 @@ class MmapLogWriterTest {
         owner.close()
         val text = AlogTestDecode.linesInDir(dir).joinToString("")
         assertTrue(text.contains("owner"))
+    }
+
+    @Test
+    fun recoverAfterAbandonKeepsJsonOnly() {
+        val dir = tmp.newFolder("json-only")
+        val writer = MmapLogWriter(dir, "alog")
+        val payload = "x".repeat(1024)
+        repeat(80) { i ->
+            writer.append("{\"ts\":$i,\"level\":\"I\",\"type\":\"code\",\"tag\":\"T\",\"msg\":\"bulk-$i-$payload\"}")
+        }
+        writer.awaitQueuedForTest()
+        writer.append("{\"ts\":999999,\"level\":\"I\",\"type\":\"code\",\"tag\":\"T\",\"msg\":\"leftover-json\"}")
+        writer.awaitQueuedForTest()
+        writer.abandonWithoutSealForTest()
+
+        val writer2 = MmapLogWriter(dir, "alog")
+        writer2.flush(true)
+        writer2.close()
+
+        val lines = decodeAllLines(dir)
+        assertTrue(lines.any { it.contains("\"leftover-json\"") })
+        assertTrue(lines.all { isValidJsonObjectLine(it) })
+    }
+
+    @Test
+    fun recoverWithCorruptedUsedDoesNotEmitBinaryLines() {
+        val dir = tmp.newFolder("corrupted-used")
+        val writer = MmapLogWriter(dir, "alog")
+        repeat(4) { i ->
+            writer.append("{\"ts\":$i,\"level\":\"I\",\"type\":\"code\",\"tag\":\"T\",\"msg\":\"first-$i\"}")
+        }
+        writer.flush(true)
+        writer.append("{\"ts\":100,\"level\":\"I\",\"type\":\"code\",\"tag\":\"T\",\"msg\":\"tail\"}")
+        writer.awaitQueuedForTest()
+        writer.abandonWithoutSealForTest()
+
+        val mmapFile = File(dir, "alog.mm")
+        forceUsed(mmapFile, 150 * 1024 - 1)
+
+        val writer2 = MmapLogWriter(dir, "alog")
+        writer2.flush(true)
+        writer2.close()
+
+        val lines = decodeAllLines(dir)
+        assertTrue(lines.any { it.contains("\"tail\"") })
+        assertTrue(lines.all { isValidJsonObjectLine(it) })
+
+        val alogFiles = dir.listFiles { f -> f.name.endsWith(".alog") }!!.sortedBy { it.name }
+        assertTrue(alogFiles.isNotEmpty())
+        assertTrue(alogFiles.all { file ->
+            val bytes = file.readBytes()
+            FileHeader.parse(bytes) != null && hasValidBlockCrc(bytes)
+        })
+    }
+
+    private fun decodeAllLines(dir: File): List<String> {
+        val files = dir.listFiles { f -> f.name.endsWith(".alog") }!!.sortedBy { it.name }
+        val all = mutableListOf<String>()
+        for (alog in files) {
+            val bytes = alog.readBytes()
+            val parsed = FileHeader.parse(bytes)
+            assertTrue("missing ALGF header in ${alog.name}", parsed != null)
+            val (_, start) = parsed!!
+            val blocks = BlockCodec.scan(bytes, start).blocks
+            for (block in blocks) {
+                val text = String(BlockCodec.inflate(block.payload), Charsets.UTF_8)
+                text.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.forEach { all.add(it) }
+            }
+        }
+        return all
+    }
+
+    private fun isValidJsonObjectLine(line: String): Boolean {
+        return line.startsWith("{") &&
+            line.endsWith("}") &&
+            line.contains("\"ts\":") &&
+            line.contains("\"level\":") &&
+            line.contains("\"type\":") &&
+            line.contains("\"tag\":") &&
+            line.contains("\"msg\":")
+    }
+
+    private fun forceUsed(mmapFile: File, used: Int) {
+        RandomAccessFile(mmapFile, "rw").use { raf ->
+            raf.seek(8)
+            val bytes = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(used).array()
+            raf.write(bytes)
+        }
+    }
+
+    private fun hasValidBlockCrc(bytes: ByteArray): Boolean {
+        val parsed = FileHeader.parse(bytes) ?: return false
+        var i = parsed.second
+        while (i <= bytes.size - 4) {
+            if (!(bytes[i] == 'A'.code.toByte() &&
+                    bytes[i + 1] == 'L'.code.toByte() &&
+                    bytes[i + 2] == 'G'.code.toByte() &&
+                    bytes[i + 3] == '1'.code.toByte())
+            ) {
+                i++
+                continue
+            }
+            if (i + BlockCodec.FIXED_HEADER > bytes.size) return false
+            val flags = bytes[i + 5].toInt() and 0xFF
+            val payloadLen = ByteBuffer.wrap(bytes, i + 18, 4).order(ByteOrder.BIG_ENDIAN).int
+            if (payloadLen < 0) return false
+            val nonceLen = if (flags and BlockCodec.FLAG_ENCRYPTED != 0) 12 else 0
+            val end = i + BlockCodec.FIXED_HEADER + nonceLen + payloadLen + 4
+            if (end > bytes.size) return false
+            val crcStored = ByteBuffer.wrap(bytes, end - 4, 4).order(ByteOrder.BIG_ENDIAN).int
+            val crc = CRC32().apply { update(bytes, i, end - i - 4) }.value.toInt()
+            if (crc != crcStored) return false
+            i = end
+        }
+        return true
     }
 }
