@@ -16,6 +16,10 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
+/**
+ * mmap 落盘实现，由 [com.chyi.alog.printer.file.FilePrinter] 在 [com.chyi.alog.printer.file.WriterMode.MMAP] 下创建。
+ * 一般无需直接实例化。
+ */
 class MmapLogWriter(
     dir: File,
     namePrefix: String,

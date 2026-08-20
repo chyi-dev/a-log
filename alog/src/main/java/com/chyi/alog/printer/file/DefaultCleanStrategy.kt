@@ -3,6 +3,10 @@ package com.chyi.alog.printer.file
 import java.io.File
 import java.util.concurrent.TimeUnit
 
+/**
+ * 默认清理：删除超过 [retainDays] 的文件；
+ * 剩余总量仍超过 [maxTotalBytes] 时，按修改时间从旧到新继续删除。
+ */
 class DefaultCleanStrategy : CleanStrategy {
     override fun selectForDeletion(
         files: List<File>,

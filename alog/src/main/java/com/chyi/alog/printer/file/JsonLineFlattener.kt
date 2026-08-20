@@ -4,6 +4,10 @@ import com.chyi.alog.LogItem
 import com.chyi.alog.LogLevel
 import com.chyi.alog.LogType
 
+/**
+ * 默认序列化：每条日志一行 JSON，字段为 `ts`、`level`、`type`、`tag`、`msg`。
+ * 装饰字段（线程名、调用栈、边框）不会写入。
+ */
 class JsonLineFlattener : Flattener {
     override fun flatten(item: LogItem): String {
         val msg = escape(item.msg)

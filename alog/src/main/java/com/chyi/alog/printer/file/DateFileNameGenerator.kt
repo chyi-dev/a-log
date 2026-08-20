@@ -4,6 +4,10 @@ import com.chyi.alog.ALogDefaults
 import com.chyi.alog.store.LogFileManager
 import java.io.File
 
+/**
+ * 默认命名：`{prefix}_{yyyyMMdd}_{seq}.alog`。
+ * 当天已有文件未满 [maxFileSize] 时复用该 seq。
+ */
 class DateFileNameGenerator(
     private val maxFileSize: Long = ALogDefaults.MAX_FILE_SIZE,
 ) : FileNameGenerator {

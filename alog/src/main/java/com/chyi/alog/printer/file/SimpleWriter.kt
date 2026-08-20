@@ -6,6 +6,9 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
 
+/**
+ * 同步直写 `.alog` 的 [Writer]。由 [WriterMode.SIMPLE] 选用，也可手动传入 [FilePrinter.Builder.writer]。
+ */
 class SimpleWriter(
     dir: File,
     namePrefix: String,

@@ -7,6 +7,11 @@ import com.chyi.alog.LogLevel
 import com.chyi.alog.LogType
 import com.chyi.alog.formatter.BorderFormatter
 
+/**
+ * 输出到 Android Logcat。
+ *
+ * @param autoSeparate 为 `true`（默认）时，超过约 4KB 的消息会分段打印。
+ */
 class AndroidPrinter(
     private val autoSeparate: Boolean = true,
 ) : Printer {
