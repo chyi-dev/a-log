@@ -7,8 +7,8 @@ import java.util.zip.Deflater
 import java.util.zip.Inflater
 
 object BlockCodec {
-    val MAGIC: ByteArray = byteArrayOf(0x41, 0x4C, 0x47, 0x31) // ALG1
-    const val VERSION: Byte = 1
+    private val MAGIC: ByteArray = byteArrayOf(0x41, 0x4C, 0x47, 0x31) // ALG1
+    private const val VERSION: Byte = 1
     const val FLAG_COMPRESSED = 0x01
     const val FIXED_HEADER = 22
 

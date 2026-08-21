@@ -16,17 +16,6 @@
         </DropdownSelection>
         <DialogSelection />
       </SelectionState>
-      <SelectionState runConfigName="sample-xlog">
-        <option name="selectionMode" value="DROPDOWN" />
-        <DropdownSelection timestamp="2026-08-21T02:37:50.703368800Z">
-          <Target type="DEFAULT_BOOT">
-            <handle>
-              <DeviceId pluginId="PhysicalDevice" identifier="serial=d47bc4faa10910dc" />
-            </handle>
-          </Target>
-        </DropdownSelection>
-        <DialogSelection />
-      </SelectionState>
     </selectionStates>
   </component>
 </project>
