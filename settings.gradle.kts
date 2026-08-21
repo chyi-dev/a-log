@@ -16,6 +16,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // mars-xlog is not on Maven Central; Aliyun public mirror still hosts 1.2.5
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
     }
 }
 
@@ -24,3 +26,4 @@ include(":alog")
 include(":alog-decode")
 include(":alog-upload")
 include(":sample")
+include(":sample-xlog")
