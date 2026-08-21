@@ -17,8 +17,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "XLOG_ENCRYPT", "false")
+        }
         release {
             isMinifyEnabled = false
+            buildConfigField("boolean", "XLOG_ENCRYPT", "true")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

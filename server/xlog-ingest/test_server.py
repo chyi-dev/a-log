@@ -129,6 +129,36 @@ class XlogIngestServerTest(unittest.TestCase):
         self.assertEqual(5, page0["total"])
         self.assertEqual(["line-0", "line-1"], [r["msg"] for r in page0["items"]])
 
+    def test_decode_crypt_fixture(self):
+        fixture = Path(__file__).resolve().parent / "testdata" / "crypt_sample.xlog"
+        self.assertTrue(fixture.is_file())
+        upload_id = "u-crypt"
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        assembled = Path(self.data) / "files" / upload_id
+        assembled.mkdir(parents=True)
+        (assembled / "crypt_sample.xlog").write_bytes(fixture.read_bytes())
+        (tasks / (upload_id + ".json")).write_text(
+            json.dumps(
+                {
+                    "uploadId": upload_id,
+                    "status": "negotiating",
+                    "meta": {"unionId": "demo-user", "reason": "manual"},
+                    "files": [
+                        {"fileId": "f-crypt", "name": "crypt_sample.xlog", "skip": False}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        code, decoded = self._json("POST", "/logs/tasks/%s/decode" % upload_id, {})
+        self.assertEqual(200, code)
+        self.assertGreaterEqual(decoded["lines"], 1)
+        code, details = self._json("GET", "/logs/tasks/%s/details" % upload_id)
+        self.assertEqual(200, code)
+        msgs = [r.get("msg") for r in details["items"]]
+        self.assertTrue(any("hello-encrypted-xlog" in str(m) for m in msgs), msgs)
+
 
 if __name__ == "__main__":
     unittest.main()

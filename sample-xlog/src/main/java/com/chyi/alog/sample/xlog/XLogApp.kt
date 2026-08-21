@@ -30,7 +30,15 @@ class XLogApp : Application() {
         xlogCacheDir = File(filesDir, if (isPush) "xlog-cache-push" else "xlog-cache")
         logDir.mkdirs()
         xlogCacheDir.mkdirs()
-        XLogFacade.open(logDir, xlogCacheDir, prefix, BuildConfig.DEBUG)
+        val pub = assets.open("xlog_public.hex").bufferedReader().readText().trim()
+        XLogFacade.open(
+            logDir,
+            xlogCacheDir,
+            prefix,
+            BuildConfig.DEBUG,
+            BuildConfig.XLOG_ENCRYPT,
+            pub,
+        )
         XLogFacade.reconfigure(console = BuildConfig.DEBUG, file = true, debug = BuildConfig.DEBUG)
         if (!isPush && process == packageName) {
             startService(Intent(this, PushProcessService::class.java))

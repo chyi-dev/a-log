@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-import unittest
-
-from decode_xlog import lines_to_details, decode_bytes, decode_file
-import tempfile
 import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from decode_xlog import (
+    build_crypt_zlib_block,
+    decode_bytes,
+    decode_file,
+    lines_to_details,
+    load_private_key_hex,
+    tea_decrypt,
+    tea_encrypt,
+)
 
 
 class DecodeXlogTest(unittest.TestCase):
@@ -28,6 +37,35 @@ class DecodeXlogTest(unittest.TestCase):
             rows = decode_file(path)
             self.assertEqual(1, len(rows))
             self.assertEqual("internal", rows[0]["type"])
+
+    def test_tea_roundtrip(self):
+        key = b"0123456789abcdef"
+        plain = b"abcdefghijklmnop"  # 16 bytes
+        enc = tea_encrypt(plain, key)
+        self.assertNotEqual(enc, plain)
+        self.assertEqual(plain, tea_decrypt(enc, key))
+
+    def test_crypt_zlib_block_roundtrip(self):
+        priv = load_private_key_hex()
+        self.assertTrue(priv)
+        line = b"2026-08-21 09:00:00.001 [I][Crypt] hello-encrypted-xlog\n"
+        blob = build_crypt_zlib_block(line, priv, seq=1)
+        plain = decode_bytes(blob, private_key_hex=priv)
+        self.assertIn(b"hello-encrypted-xlog", plain)
+
+    def test_crypt_fixture_file(self):
+        fixture = Path(__file__).resolve().parent / "testdata" / "crypt_sample.xlog"
+        self.assertTrue(fixture.is_file(), "run _make_crypt_fixture.py first")
+        rows = decode_file(str(fixture))
+        msgs = [r.get("msg") for r in rows]
+        self.assertTrue(any("hello-encrypted-xlog" in str(m) for m in msgs), msgs)
+
+    def test_crypt_missing_key_reports_internal(self):
+        priv = load_private_key_hex()
+        line = b"2026-08-21 09:00:00.001 [I][Crypt] secret\n"
+        blob = build_crypt_zlib_block(line, priv, seq=1)
+        plain = decode_bytes(blob, private_key_hex="")
+        self.assertIn(b"private key missing", plain)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Decode Mars xlog (nocrypt) into detail rows for xlog-ingest."""
+"""Decode Mars xlog (nocrypt + ECDH/TEA crypt) into detail rows for xlog-ingest."""
 from __future__ import annotations
 
+import binascii
 import os
 import re
 import struct
 import traceback
 import zlib
 from datetime import datetime
+from pathlib import Path
+
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicNumbers
 
 MAGIC_NO_COMPRESS_START = 0x03
 MAGIC_NO_COMPRESS_START1 = 0x06
@@ -38,6 +43,9 @@ LEVEL_MAP = {
     "F": "FATAL",
 }
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_PRIV = _REPO_ROOT / "docs" / "keys" / "xlog_private.hex"
+
 
 def _crypt_key_len(magic: int):
     if magic in (MAGIC_NO_COMPRESS_START, MAGIC_COMPRESS_START, MAGIC_COMPRESS_START1):
@@ -54,6 +62,77 @@ def _crypt_key_len(magic: int):
     ):
         return 64
     return None
+
+
+def tea_decipher(block8: bytes, key16: bytes) -> bytes:
+    op = 0xFFFFFFFF
+    v0, v1 = struct.unpack("<II", block8[0:8])
+    k1, k2, k3, k4 = struct.unpack("<IIII", key16[0:16])
+    delta = 0x9E3779B9
+    s = (delta << 4) & op
+    for _ in range(16):
+        v1 = (v1 - (((v0 << 4) + k3) ^ (v0 + s) ^ ((v0 >> 5) + k4))) & op
+        v0 = (v0 - (((v1 << 4) + k1) ^ (v1 + s) ^ ((v1 >> 5) + k2))) & op
+        s = (s - delta) & op
+    return struct.pack("<II", v0, v1)
+
+
+def tea_encipher(block8: bytes, key16: bytes) -> bytes:
+    op = 0xFFFFFFFF
+    v0, v1 = struct.unpack("<II", block8[0:8])
+    k1, k2, k3, k4 = struct.unpack("<IIII", key16[0:16])
+    delta = 0x9E3779B9
+    s = 0
+    for _ in range(16):
+        s = (s + delta) & op
+        v0 = (v0 + (((v1 << 4) + k1) ^ (v1 + s) ^ ((v1 >> 5) + k2))) & op
+        v1 = (v1 + (((v0 << 4) + k3) ^ (v0 + s) ^ ((v0 >> 5) + k4))) & op
+    return struct.pack("<II", v0, v1)
+
+
+def tea_decrypt(data: bytes, key16: bytes) -> bytes:
+    num = len(data) // 8 * 8
+    out = bytearray()
+    for i in range(0, num, 8):
+        out.extend(tea_decipher(data[i : i + 8], key16))
+    out.extend(data[num:])
+    return bytes(out)
+
+
+def tea_encrypt(data: bytes, key16: bytes) -> bytes:
+    num = len(data) // 8 * 8
+    out = bytearray()
+    for i in range(0, num, 8):
+        out.extend(tea_encipher(data[i : i + 8], key16))
+    out.extend(data[num:])
+    return bytes(out)
+
+
+def load_private_key_hex(explicit: str | None = None) -> str | None:
+    env = os.environ.get("XLOG_PRIVATE_KEY")
+    raw = explicit if explicit is not None else env
+    if raw:
+        candidate = Path(raw)
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8").strip()
+        return raw.strip()
+    if _DEFAULT_PRIV.is_file():
+        return _DEFAULT_PRIV.read_text(encoding="utf-8").strip()
+    return None
+
+
+def ecdh_tea_key(priv_hex: str, client_pub_xy: bytes) -> bytes:
+    if len(client_pub_xy) != 64:
+        raise ValueError("client pubkey must be 64 bytes")
+    priv_int = int(priv_hex, 16)
+    private_key = ec.derive_private_key(priv_int, ec.SECP256K1())
+    x = int.from_bytes(client_pub_xy[:32], "big")
+    y = int.from_bytes(client_pub_xy[32:], "big")
+    public_key = EllipticCurvePublicNumbers(x, y, ec.SECP256K1()).public_key()
+    shared = private_key.exchange(ec.ECDH(), public_key)
+    if len(shared) < 16:
+        raise ValueError("ECDH shared secret too short")
+    return shared[:16]
 
 
 def _is_good(buf: bytes, offset: int, count: int):
@@ -84,7 +163,13 @@ def _start_pos(buf: bytes, count: int) -> int:
     return -1
 
 
-def _decode_block(buf: bytes, offset: int, out: bytearray, lastseq: list) -> int:
+def _decode_block(
+    buf: bytes,
+    offset: int,
+    out: bytearray,
+    lastseq: list,
+    priv_hex: str | None,
+) -> int:
     if offset >= len(buf):
         return -1
     ok, reason = _is_good(buf, offset, 1)
@@ -107,15 +192,25 @@ def _decode_block(buf: bytes, offset: int, out: bytearray, lastseq: list) -> int
     if seq != 0:
         lastseq[0] = seq
     try:
-        if magic in (
-            MAGIC_NO_COMPRESS_START1,
-            MAGIC_COMPRESS_START2,
-            MAGIC_SYNC_ZSTD_START,
-            MAGIC_ASYNC_ZSTD_START,
-        ):
-            out.extend(b"[F]encrypted/wrong script block skipped\n")
-            return offset + header_len + length + 1
-        if magic in (MAGIC_ASYNC_NO_CRYPT_ZSTD_START, MAGIC_SYNC_NO_CRYPT_ZSTD_START):
+        if magic in (MAGIC_COMPRESS_START2, MAGIC_ASYNC_ZSTD_START):
+            if not priv_hex:
+                out.extend(b"[F]encrypted block but private key missing\n")
+                return offset + header_len + length + 1
+            client_pub = bytes(
+                buf[offset + header_len - key_len : offset + header_len]
+            )
+            tea_key = ecdh_tea_key(priv_hex, client_pub)
+            raw = tea_decrypt(raw, tea_key)
+            if magic == MAGIC_COMPRESS_START2:
+                raw = zlib.decompressobj(-zlib.MAX_WBITS).decompress(raw)
+            else:
+                import zstandard as zstd  # type: ignore
+
+                raw = zstd.ZstdDecompressor().decompress(raw, max_output_size=64 * 1024 * 1024)
+        elif magic in (MAGIC_NO_COMPRESS_START1, MAGIC_SYNC_ZSTD_START):
+            # Official script leaves body as-is for these sync/encrypted-header variants.
+            pass
+        elif magic in (MAGIC_ASYNC_NO_CRYPT_ZSTD_START, MAGIC_SYNC_NO_CRYPT_ZSTD_START):
             try:
                 import zstandard as zstd  # type: ignore
 
@@ -140,7 +235,13 @@ def _decode_block(buf: bytes, offset: int, out: bytearray, lastseq: list) -> int
     return offset + header_len + length + 1
 
 
-def decode_bytes(data: bytes) -> bytes:
+def decode_bytes(data: bytes, private_key_hex: str | None = None) -> bytes:
+    if private_key_hex == "":
+        priv = None
+    elif private_key_hex is not None:
+        priv = load_private_key_hex(private_key_hex)
+    else:
+        priv = load_private_key_hex()
     start = _start_pos(data, 2)
     if start < 0:
         start = _start_pos(data, 1)
@@ -150,10 +251,35 @@ def decode_bytes(data: bytes) -> bytes:
     lastseq = [0]
     pos = start
     while True:
-        pos = _decode_block(data, pos, out, lastseq)
+        pos = _decode_block(data, pos, out, lastseq, priv)
         if pos < 0:
             break
     return bytes(out)
+
+
+def build_crypt_zlib_block(
+    plaintext: bytes,
+    server_priv_hex: str,
+    seq: int = 1,
+    begin_hour: int = 0,
+    end_hour: int = 23,
+) -> bytes:
+    """Build one MAGIC_COMPRESS_START2 block (for tests)."""
+    client = ec.generate_private_key(ec.SECP256K1())
+    nums = client.public_key().public_numbers()
+    client_xy = nums.x.to_bytes(32, "big") + nums.y.to_bytes(32, "big")
+    tea_key = ecdh_tea_key(server_priv_hex, client_xy)
+    co = zlib.compressobj(level=zlib.Z_DEFAULT_COMPRESSION, wbits=-zlib.MAX_WBITS)
+    compressed = co.compress(plaintext) + co.flush()
+    encrypted = tea_encrypt(compressed, tea_key)
+    header = bytearray()
+    header.append(MAGIC_COMPRESS_START2)
+    header.extend(struct.pack("<H", seq))
+    header.append(begin_hour & 0xFF)
+    header.append(end_hour & 0xFF)
+    header.extend(struct.pack("<I", len(encrypted)))
+    header.extend(client_xy)
+    return bytes(header) + encrypted + bytes([MAGIC_END])
 
 
 def _parse_ts(stamp: str) -> int:
@@ -205,12 +331,13 @@ def lines_to_details(text: str, filename: str = "") -> list[dict]:
 
 
 def decode_file(path: str, private_key_pem: str | None = None) -> list[dict]:
-    del private_key_pem  # nocrypt sample only
+    # private_key_pem kept for call-site compatibility with alog-style hooks;
+    # for xlog it is private key hex or a path (also via XLOG_PRIVATE_KEY).
     with open(path, "rb") as f:
         data = f.read()
     if not data:
         return []
-    plain = decode_bytes(data)
+    plain = decode_bytes(data, private_key_hex=private_key_pem)
     name = os.path.basename(path)
     if not plain:
         return [

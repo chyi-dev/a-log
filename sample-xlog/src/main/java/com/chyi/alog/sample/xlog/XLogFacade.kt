@@ -14,12 +14,26 @@ object XLogFacade {
     private var logDir: File? = null
     private var cacheDir: File? = null
     private var namePrefix: String = "xlog"
+    private var encrypt: Boolean = false
+    private var publicKeyHex: String = ""
     private val phone = Pattern.compile("(?<!\\d)(1\\d{10})(?!\\d)")
 
-    fun open(logDir: File, cacheDir: File, namePrefix: String, debug: Boolean) {
+    fun open(
+        logDir: File,
+        cacheDir: File,
+        namePrefix: String,
+        debug: Boolean,
+        encrypt: Boolean,
+        publicKeyHex: String,
+    ) {
         this.logDir = logDir
         this.cacheDir = cacheDir
         this.namePrefix = namePrefix
+        this.encrypt = encrypt
+        this.publicKeyHex = publicKeyHex.trim()
+        if (encrypt && this.publicKeyHex.isEmpty()) {
+            throw IllegalStateException("XLOG_ENCRYPT=true but xlog_public.hex is empty")
+        }
         logDir.mkdirs()
         cacheDir.mkdirs()
         if (!opened.getAndSet(true)) {
@@ -32,7 +46,7 @@ object XLogFacade {
             }
         }
         val level = if (debug) Xlog.LEVEL_DEBUG else Xlog.LEVEL_INFO
-        // empty pubkey => nocrypt
+        val pubkey = if (encrypt) this.publicKeyHex else ""
         Xlog.open(
             false,
             level,
@@ -45,14 +59,14 @@ object XLogFacade {
         Log.setLogImp(Xlog())
         fileEnabled = true
         setConsole(debug)
-        i("XLog", "ready file=$fileEnabled console=$consoleEnabled prefix=$namePrefix")
+        i("XLog", "ready file=$fileEnabled console=$consoleEnabled encrypt=$encrypt prefix=$namePrefix")
     }
 
     fun reconfigure(console: Boolean, file: Boolean, debug: Boolean) {
         if (file && !fileEnabled) {
             val log = logDir ?: return
             val cache = cacheDir ?: return
-            open(log, cache, namePrefix, debug)
+            open(log, cache, namePrefix, debug, encrypt, publicKeyHex)
         } else if (!file && fileEnabled) {
             flush(true)
             try {
@@ -76,7 +90,6 @@ object XLogFacade {
     fun flush(@Suppress("UNUSED_PARAMETER") sync: Boolean) {
         if (!fileEnabled) return
         try {
-            // mars-xlog 1.2.5 Log.appenderFlush() has no sync flag; flush then brief wait for async appender
             Log.appenderFlush()
             if (sync) {
                 Thread.sleep(50)
