@@ -2,7 +2,7 @@
 
 模块：
 
-- `:alog` 写日志（门面、落盘、压缩、加密）。业务 App：`implementation(project(":alog"))`
+- `:alog` 写日志（门面、落盘、压缩）。业务 App：`implementation(project(":alog"))`
 - `:alog-upload` 读 `.alog` 并分片上传。需要上报时再加：`implementation(project(":alog-upload"))`
 - `:alog-decode` 把 `.alog` 还原成明文 JSON 行。只给开发 CLI / 后续明文查看 App，**不要**打进业务 APK
 
@@ -86,13 +86,11 @@ fun intercept(item: LogItem): LogItem?
 
 ```kotlin
 implementation(project(":alog-decode"))
-val lines = AlogDecoder.decode(alogFile, privateKeyPem)
+val lines = AlogDecoder.decode(alogFile)
 ```
 
 开发机 CLI：
 
 ```
-:alog-decode:run --args="--key docs/keys/alog_private.pem path/to/file.alog"
+:alog-decode:run --args="path/to/file.alog"
 ```
-
-私钥只放在解码端，不要打进写日志的业务 App。

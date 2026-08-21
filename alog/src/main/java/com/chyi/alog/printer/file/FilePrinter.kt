@@ -3,14 +3,12 @@ package com.chyi.alog.printer.file
 import com.chyi.alog.ALogDefaults
 import com.chyi.alog.LogItem
 import com.chyi.alog.LogLevel
-import com.chyi.alog.crypto.CryptoConfig
-import com.chyi.alog.crypto.RsaKeyWrap
 import com.chyi.alog.printer.Printer
 import com.chyi.alog.store.MmapLogWriter
 import java.io.File
 
 /**
- * 将日志写入 `.alog` 文件。通过 [Builder] 配置目录、轮转、加密与 Writer 实现。
+ * 将日志写入 `.alog` 文件。通过 [Builder] 配置目录、轮转、压缩落盘与 Writer 实现。
  *
  * FATAL 级别会立即同步刷盘。
  */
@@ -43,9 +41,6 @@ class FilePrinter private constructor(
         private var flattener: Flattener = JsonLineFlattener()
         private var writerOverride: Writer? = null
         private var writerMode: WriterMode = WriterMode.MMAP
-        private var publicKeyPem: String? = null
-        private var keyId: String = "dev-1"
-        private var encrypt: Boolean = false
         private var onInternal: ((String) -> Unit)? = null
         private var fileNameGenerator: FileNameGenerator? = null
         private var backupStrategy: BackupStrategy? = null
@@ -71,12 +66,6 @@ class FilePrinter private constructor(
         fun pid(value: Int) = apply { pid = value }
         /** mmap 缓存目录；不设置时与日志目录相同。 */
         fun cacheDir(value: File) = apply { cacheDir = value }
-        /** RSA 公钥 PEM，与 [encrypt] 同时开启时用于封装文件 DEK。 */
-        fun publicKeyPem(value: String?) = apply { publicKeyPem = value }
-        /** 密钥标识，写入文件头，默认 `"dev-1"`。 */
-        fun keyId(value: String) = apply { keyId = value }
-        /** 是否加密落盘。需同时提供非空 [publicKeyPem]。 */
-        fun encrypt(enabled: Boolean) = apply { encrypt = enabled }
         /** 内部告警回调（如行过长截断），不会写入 `.alog`。 */
         fun onInternal(value: (String) -> Unit) = apply { onInternal = value }
         /** 自定义 `.alog` 文件名生成。 */
@@ -86,13 +75,8 @@ class FilePrinter private constructor(
         /** 过期与超容量清理策略。 */
         fun cleanStrategy(value: CleanStrategy) = apply { cleanStrategy = value }
 
-        /** 构建文件 Printer。未提供公钥时即使 [encrypt] 为 true 也会以明文写入。 */
+        /** 构建文件 Printer。MMAP 模式封块时 deflate 压缩后写入。 */
         fun build(): FilePrinter {
-            val crypto = if (encrypt && !publicKeyPem.isNullOrBlank()) {
-                CryptoConfig(true, keyId, RsaKeyWrap.parsePublicPem(publicKeyPem!!))
-            } else {
-                CryptoConfig(false, keyId, null)
-            }
             val writer = writerOverride ?: when (writerMode) {
                 WriterMode.SIMPLE -> SimpleWriter(
                     dir = folder,
@@ -110,7 +94,6 @@ class FilePrinter private constructor(
                     maxFileSize = maxFileSize,
                     retainDays = retainDays,
                     maxTotalBytes = maxTotalBytes,
-                    crypto = crypto,
                     onInternal = onInternal,
                     nameGenerator = fileNameGenerator,
                     backupStrategy = backupStrategy,

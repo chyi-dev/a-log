@@ -1,6 +1,5 @@
 package com.chyi.alog.store
 
-import com.chyi.alog.ALogDefaults
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.CRC32
@@ -11,7 +10,6 @@ object BlockCodec {
     val MAGIC: ByteArray = byteArrayOf(0x41, 0x4C, 0x47, 0x31) // ALG1
     const val VERSION: Byte = 1
     const val FLAG_COMPRESSED = 0x01
-    const val FLAG_ENCRYPTED = 0x02
     const val FIXED_HEADER = 22
 
     data class Block(
@@ -19,7 +17,6 @@ object BlockCodec {
         val flags: Int,
         val seq: Int,
         val unixMs: Long,
-        val nonce: ByteArray,
         val payload: ByteArray,
         val offset: Int,
     )
@@ -34,11 +31,9 @@ object BlockCodec {
         unixMs: Long,
         payload: ByteArray,
         compressed: Boolean,
-        nonce: ByteArray = ByteArray(0),
     ): ByteArray {
-        val flags = (if (compressed) FLAG_COMPRESSED else 0) or
-            (if (nonce.isNotEmpty()) FLAG_ENCRYPTED else 0)
-        val size = FIXED_HEADER + nonce.size + payload.size + 4
+        val flags = if (compressed) FLAG_COMPRESSED else 0
+        val size = FIXED_HEADER + payload.size + 4
         val buf = ByteBuffer.allocate(size).order(ByteOrder.BIG_ENDIAN)
         buf.put(MAGIC)
         buf.put(VERSION)
@@ -46,15 +41,11 @@ object BlockCodec {
         buf.putInt(seq)
         buf.putLong(unixMs)
         buf.putInt(payload.size)
-        buf.put(nonce)
         buf.put(payload)
-        val crcSrc = buf.array().copyOf(FIXED_HEADER + nonce.size + payload.size)
+        val crcSrc = buf.array().copyOf(FIXED_HEADER + payload.size)
         buf.putInt(crc32(crcSrc))
         return buf.array()
     }
-
-    fun nonceLength(flags: Int): Int =
-        if (flags and FLAG_ENCRYPTED != 0) ALogDefaults.GCM_NONCE_BYTES else 0
 
     fun scan(bytes: ByteArray, start: Int = 0): ScanResult {
         val blocks = mutableListOf<Block>()
@@ -72,7 +63,7 @@ object BlockCodec {
                 continue
             }
             blocks.add(parsed)
-            i = parsed.offset + FIXED_HEADER + parsed.nonce.size + parsed.payload.size + 4
+            i = parsed.offset + FIXED_HEADER + parsed.payload.size + 4
         }
         return ScanResult(blocks, bad)
     }
@@ -117,16 +108,13 @@ object BlockCodec {
         val unixMs = buf.long
         val payloadLen = buf.int
         if (payloadLen < 0) return null
-        val nonceLen = nonceLength(flags)
-        if (offset + FIXED_HEADER + nonceLen + payloadLen + 4 > bytes.size) return null
-        val nonce = ByteArray(nonceLen)
-        buf.get(nonce)
+        if (offset + FIXED_HEADER + payloadLen + 4 > bytes.size) return null
         val payload = ByteArray(payloadLen)
         buf.get(payload)
         val crc = buf.int
-        val crcSrc = bytes.copyOfRange(offset, offset + FIXED_HEADER + nonceLen + payloadLen)
+        val crcSrc = bytes.copyOfRange(offset, offset + FIXED_HEADER + payloadLen)
         if (crc != crc32(crcSrc)) return null
-        return Block(version, flags, seq, unixMs, nonce, payload, offset)
+        return Block(version, flags, seq, unixMs, payload, offset)
     }
 
     private fun matchMagic(bytes: ByteArray, i: Int): Boolean {

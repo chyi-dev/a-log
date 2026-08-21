@@ -27,15 +27,12 @@ class ALogApp : Application() {
         private set
     lateinit var alogCacheDir: File
         private set
-    lateinit var publicKeyPem: String
-        private set
     private var filePrinter: FilePrinter? = null
 
     override fun onCreate() {
         super.onCreate()
         ProcessInfo.pid = Process.myPid()
         ProcessInfo.processName = currentProcessName()
-        publicKeyPem = assets.open("alog_public.pem").bufferedReader().readText()
         logDir = File(filesDir, "alog")
         alogCacheDir = ALogPaths.cacheRoot(filesDir)
         val namePrefix = ALogPaths.namePrefix(ProcessInfo.processName, packageName)
@@ -45,9 +42,6 @@ class ALogApp : Application() {
             .namePrefix(namePrefix)
             .cacheDir(alogCacheDir)
             .writerMode(com.chyi.alog.printer.file.WriterMode.MMAP)
-            .encrypt(!BuildConfig.DEBUG)
-            .publicKeyPem(publicKeyPem)
-            .keyId("dev-1")
             .onInternal { Log.w("ALogInternal", it) }
             .build()
         initLoggers(console = BuildConfig.DEBUG, file = true)

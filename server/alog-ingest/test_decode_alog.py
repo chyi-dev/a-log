@@ -15,7 +15,7 @@ def crc32_signed_bytes(data: bytes) -> bytes:
 def make_unencrypted_alog(lines: list[str]) -> bytes:
     body = ("\n".join(lines) + "\n").encode("utf-8")
     payload = zlib.compress(body)
-    header = b"ALGF" + bytes([1, 0]) + struct.pack(">HH", 0, 0)
+    header = b"ALGF" + bytes([1])
     block = bytearray()
     block.extend(b"ALG1")
     block.append(1)

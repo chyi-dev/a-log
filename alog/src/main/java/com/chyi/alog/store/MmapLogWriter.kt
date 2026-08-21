@@ -1,9 +1,6 @@
 package com.chyi.alog.store
 
 import com.chyi.alog.ALogDefaults
-import com.chyi.alog.crypto.AesGcm
-import com.chyi.alog.crypto.CryptoConfig
-import com.chyi.alog.crypto.RsaKeyWrap
 import com.chyi.alog.printer.file.Writer
 import java.io.File
 import java.nio.ByteBuffer
@@ -26,7 +23,6 @@ class MmapLogWriter(
     maxFileSize: Long = ALogDefaults.MAX_FILE_SIZE,
     retainDays: Int = ALogDefaults.RETAIN_DAYS,
     maxTotalBytes: Long = ALogDefaults.MAX_TOTAL_BYTES,
-    private val crypto: CryptoConfig? = null,
     private val mmapSize: Int = ALogDefaults.MMAP_SIZE,
     private val onInternal: ((String) -> Unit)? = null,
     fileManager: LogFileManager? = null,
@@ -62,8 +58,6 @@ class MmapLogWriter(
     private var fileLock: java.nio.channels.FileLock? = null
     private val skippedLock = AtomicBoolean(false)
     private var seq = 0
-    private var dek: ByteArray? = null
-    private var fileHeader: FileHeader? = null
 
     init {
         dir.mkdirs()
@@ -285,14 +279,8 @@ class MmapLogWriter(
         val firstTs = getLong(buf, 12)
         try {
             ensureHeader()
-            var payload = BlockCodec.deflate(sealedBody)
-            var nonce = ByteArray(0)
-            val key = dek()
-            if (key != null) {
-                nonce = AesGcm.randomNonce()
-                payload = AesGcm.encrypt(key, nonce, payload)
-            }
-            val block = BlockCodec.encode(seq++, firstTs, payload, compressed = true, nonce = nonce)
+            val payload = BlockCodec.deflate(sealedBody)
+            val block = BlockCodec.encode(seq++, firstTs, payload, compressed = true)
             files.append(block)
         } catch (t: Throwable) {
             dropped.incrementAndGet()
@@ -304,36 +292,9 @@ class MmapLogWriter(
 
     private fun ensureHeader() {
         if (!files.needsHeader()) return
-        dek = null
-        val header = buildHeader()
-        fileHeader = header
         files.currentFile()
-        files.append(header.toBytes())
+        files.append(FileHeader().toBytes())
         files.markHeaderWritten()
-    }
-
-    private fun buildHeader(): FileHeader {
-        val cfg = crypto
-        if (cfg == null || !cfg.enabled || cfg.publicKey == null) {
-            return FileHeader()
-        }
-        val key = dek() ?: return FileHeader()
-        val wrapped = RsaKeyWrap.wrap(cfg.publicKey, key)
-        return FileHeader(
-            flags = FileHeader.FLAG_HAS_DEK,
-            keyId = cfg.keyId,
-            wrappedDek = wrapped,
-        )
-    }
-
-    private fun dek(): ByteArray? {
-        val cfg = crypto ?: return null
-        if (!cfg.enabled || cfg.publicKey == null) return null
-        val existing = dek
-        if (existing != null) return existing
-        val created = AesGcm.randomKey()
-        dek = created
-        return created
     }
 
     private fun resetHeader(buf: ByteBuffer, firstTs: Long, clearBytes: Int = 0) {

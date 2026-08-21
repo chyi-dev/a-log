@@ -1,6 +1,6 @@
 package com.chyi.alog
 
-/** 落盘、加密与刷盘相关的默认值。可通过 [com.chyi.alog.printer.file.FilePrinter.Builder] 覆盖部分项。 */
+/** 落盘与刷盘相关的默认值。可通过 [com.chyi.alog.printer.file.FilePrinter.Builder] 覆盖部分项。 */
 object ALogDefaults {
     /** mmap 缓存大小，150KB。 */
     const val MMAP_SIZE = 150 * 1024
@@ -20,10 +20,6 @@ object ALogDefaults {
     const val NAME_PREFIX = "alog"
     /** `.alog` 格式版本。 */
     const val FORMAT_VERSION = 1
-    /** AES-GCM nonce 长度。 */
-    const val GCM_NONCE_BYTES = 12
-    /** AES-256 密钥长度。 */
-    const val AES_KEY_BYTES = 32
     /** 同步 flush 最长等待秒数。 */
     const val FLUSH_WAIT_SECONDS = 60L
     /** mmap 缓存目录名，相对 `filesDir`。 */

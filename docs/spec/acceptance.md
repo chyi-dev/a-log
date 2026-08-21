@@ -12,17 +12,10 @@
 8. 破坏文件中部 1KB，前后块仍可解；decode 打印坏块偏移且不崩溃。
 9. 独占目录 `files/alog/{process}/`，清理不扫目录外文件。
 
-## M2
-
-10. 无私钥解不出明文。
-11. 错私钥失败信息明确。
-12. force-stop 在加密模式下仍通过。
-13. 客户端 APK 中无 DEK / AES 明文密钥。
-
 ## M3–M5
 
-14. 弱网失败后续传；重复 complete 幂等；hash 秒传。
-15. 按用户/设备 + 日期 + type 可查询。
-16. 多进程文件不交叉损坏。
-17. mmap 失败降级堆内存并 INTERNAL 告警。
-18. Release 不注册 AndroidPrinter。
+10. 弱网失败后续传；重复 complete 幂等；hash 秒传。
+11. 按用户/设备 + 日期 + type 可查询。
+12. 多进程文件不交叉损坏。
+13. mmap 失败降级堆内存并 INTERNAL 告警。
+14. Release 不注册 AndroidPrinter。

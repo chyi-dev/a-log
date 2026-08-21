@@ -34,7 +34,7 @@ class MmapLogWriterTest {
         val all = texts.joinToString("")
         assertTrue(all.contains("before-kill"))
         assertTrue(all.contains("after"))
-        assertTrue(header.wrappedDek.isEmpty())
+        assertTrue(header.version == 1)
     }
 
     @Test
@@ -153,11 +153,9 @@ class MmapLogWriterTest {
                 continue
             }
             if (i + BlockCodec.FIXED_HEADER > bytes.size) return false
-            val flags = bytes[i + 5].toInt() and 0xFF
             val payloadLen = ByteBuffer.wrap(bytes, i + 18, 4).order(ByteOrder.BIG_ENDIAN).int
             if (payloadLen < 0) return false
-            val nonceLen = if (flags and BlockCodec.FLAG_ENCRYPTED != 0) 12 else 0
-            val end = i + BlockCodec.FIXED_HEADER + nonceLen + payloadLen + 4
+            val end = i + BlockCodec.FIXED_HEADER + payloadLen + 4
             if (end > bytes.size) return false
             val crcStored = ByteBuffer.wrap(bytes, end - 4, 4).order(ByteOrder.BIG_ENDIAN).int
             val crc = CRC32().apply { update(bytes, i, end - i - 4) }.value.toInt()

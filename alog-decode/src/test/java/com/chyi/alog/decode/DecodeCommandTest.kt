@@ -16,7 +16,7 @@ class DecodeCommandTest {
         val block = BlockCodec.encode(0, 1L, payload, true)
         val file = tmp.newFile("t.alog")
         file.writeBytes(com.chyi.alog.store.FileHeader().toBytes() + block.copyOf(block.size / 2))
-        val lines = AlogDecoder.decode(file, null)
+        val lines = AlogDecoder.decode(file)
         assertTrue(lines.isEmpty() || lines.any { it.contains("ok") })
     }
 
@@ -24,7 +24,7 @@ class DecodeCommandTest {
     fun decodesPlainJsonl() {
         val file = tmp.newFile("plain.alog")
         file.writeText("{\"ts\":1,\"level\":\"I\",\"type\":\"code\",\"tag\":\"T\",\"msg\":\"plain\"}\n")
-        val lines = AlogDecoder.decode(file, null)
+        val lines = AlogDecoder.decode(file)
         assertTrue(lines.any { it.contains("plain") })
     }
 
@@ -32,7 +32,7 @@ class DecodeCommandTest {
     fun decodeCommandDelegatesToDecoder() {
         val file = tmp.newFile("plain.alog")
         file.writeText("{\"msg\":\"via-cli\"}\n")
-        val lines = DecodeCommand.decodeFile(file, null)
+        val lines = DecodeCommand.decodeFile(file)
         assertTrue(lines.any { it.contains("via-cli") })
     }
 }
