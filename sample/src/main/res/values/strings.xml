@@ -14,5 +14,5 @@
     <string name="btn_push_write">:push 写日志</string>
     <string name="btn_push_flush">:push flush</string>
     <string name="btn_list_files">列出多进程文件</string>
-    <string name="force_stop_hint">多进程：先点「单条日志」和「:push 写日志」，再两边 flush，然后「列出多进程文件」应同时有 alog_*.alog 与 alog_push_*.alog。force-stop 验收：先打日志（含 push），不要先点 flush，再 adb shell am force-stop com.chyi.alog.sample，重开后 decode files/alog/。</string>
+    <string name="force_stop_hint">多进程：先点「单条日志」和「:push 写日志」，再两边 flush，然后「列出多进程文件」应同时有 alog_*.alog 与 alog_push_*.alog。force-stop 验收：先打日志（含 push），不要先点 flush，再 adb shell am force-stop com.chyi.alog.sample，重开后用 sample-viewer 或 decode Documents/a-log/files/。</string>
 </resources>

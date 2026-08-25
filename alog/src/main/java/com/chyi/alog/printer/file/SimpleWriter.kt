@@ -19,14 +19,15 @@ class SimpleWriter(
     backupStrategy: BackupStrategy? = null,
     cleanStrategy: CleanStrategy? = null,
 ) : Writer {
+    private val resolvedBackup = FilePrinterDefaults.resolveBackup(backupStrategy)
     private val files = LogFileManager(
         dir = dir,
         namePrefix = namePrefix,
         maxFileSize = maxFileSize,
         retainDays = retainDays,
         maxTotalBytes = maxTotalBytes,
-        nameGenerator = nameGenerator ?: DateFileNameGenerator(maxFileSize),
-        backupStrategy = backupStrategy ?: FileSizeBackupStrategy(),
+        nameGenerator = FilePrinterDefaults.resolveNameGenerator(nameGenerator, resolvedBackup, maxFileSize),
+        backupStrategy = resolvedBackup,
         cleanStrategy = cleanStrategy ?: DefaultCleanStrategy(),
     )
     private val lock = Any()

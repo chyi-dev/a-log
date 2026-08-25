@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">a-log viewer</string>
+    <string name="viewer_title">ALog 解析</string>
+    <string name="btn_refresh">刷新列表</string>
+    <string name="btn_grant_storage">授予存储权限</string>
+    <string name="btn_save_txt">另存为 txt</string>
+    <string name="empty_list">暂无 .alog 文件\n请先在 sample 中写日志并 flush</string>
+    <string name="need_storage">需要「所有文件访问」权限以读取 Documents/a-log/files</string>
+    <string name="decoding">正在解密…</string>
+    <string name="decode_failed">解密失败: %1$s</string>
+    <string name="saved_txt">已保存 %1$s</string>
+    <string name="save_failed">保存失败: %1$s</string>
+</resources>

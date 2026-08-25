@@ -20,6 +20,12 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
         }
+        if (!StorageAccess.hasAccess(this)) {
+            StorageAccess.ensureAccess(this)
+            toast("请授予存储权限，日志写入 Documents/a-log/files")
+        } else {
+            app.logDir.mkdirs()
+        }
 
         binding.btnSingle.setOnClickListener {
             ALog.d("single debug")

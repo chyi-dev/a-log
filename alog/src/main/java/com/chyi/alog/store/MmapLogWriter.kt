@@ -36,16 +36,23 @@ class MmapLogWriter(
 ) : Writer {
     private val logDir = dir
     private val resolvedCacheDir = cacheDir ?: dir
-    private val files = fileManager ?: LogFileManager(
-        dir = dir,
-        namePrefix = namePrefix,
-        maxFileSize = maxFileSize,
-        retainDays = retainDays,
-        maxTotalBytes = maxTotalBytes,
-        nameGenerator = nameGenerator ?: com.chyi.alog.printer.file.DateFileNameGenerator(maxFileSize),
-        backupStrategy = backupStrategy ?: com.chyi.alog.printer.file.FileSizeBackupStrategy(),
-        cleanStrategy = cleanStrategy ?: com.chyi.alog.printer.file.DefaultCleanStrategy(),
-    )
+    private val files = fileManager ?: run {
+        val resolvedBackup = com.chyi.alog.printer.file.FilePrinterDefaults.resolveBackup(backupStrategy)
+        LogFileManager(
+            dir = dir,
+            namePrefix = namePrefix,
+            maxFileSize = maxFileSize,
+            retainDays = retainDays,
+            maxTotalBytes = maxTotalBytes,
+            nameGenerator = com.chyi.alog.printer.file.FilePrinterDefaults.resolveNameGenerator(
+                nameGenerator,
+                resolvedBackup,
+                maxFileSize,
+            ),
+            backupStrategy = resolvedBackup,
+            cleanStrategy = cleanStrategy ?: com.chyi.alog.printer.file.DefaultCleanStrategy(),
+        )
+    }
     private val mmapFile = File(resolvedCacheDir, "$namePrefix.mm")
     private val queue = LinkedBlockingQueue<Cmd>(1024)
     private val running = AtomicBoolean(true)

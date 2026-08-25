@@ -83,4 +83,68 @@ class FileStrategyTest {
         assertTrue(other.exists())
         assertTrue(stray.exists())
     }
+
+    @Test
+    fun neverBackupUsesDateOnlyNameWithoutSeq() {
+        val dir = tmp.newFolder("nb")
+        val now = System.currentTimeMillis()
+        val stamp = LogFileManager.dateStamp(now)
+        val mgr = LogFileManager(
+            dir = dir,
+            namePrefix = "alog",
+            maxFileSize = 64,
+            retainDays = 7,
+            maxTotalBytes = 64 * 1024,
+            nameGenerator = DateOnlyFileNameGenerator(),
+            backupStrategy = NeverBackupStrategy(),
+        )
+        repeat(20) {
+            mgr.append(ByteArray(32) { 'x'.code.toByte() })
+        }
+        val alogs = dir.listFiles { f -> f.name.endsWith(".alog") }!!.toList()
+        assertEquals(1, alogs.size)
+        assertEquals("alog_${stamp}.alog", alogs[0].name)
+        assertTrue(alogs[0].length() > 64)
+    }
+
+    @Test
+    fun dateOnlyGeneratorMatchesSameDayAndCleansWithoutSeq() {
+        val dir = tmp.newFolder("do")
+        val gen = DateOnlyFileNameGenerator()
+        val day1 = 1_724_000_000_000L
+        val day2 = day1 + 86_400_000L
+        val name1 = gen.nextName(dir, "alog", day1)
+        assertTrue(name1.matches(Regex("""alog_\d{8}\.alog""")))
+        assertTrue(!name1.contains(Regex("""_\d+\.alog$""").pattern) || name1.matches(Regex("""alog_\d{8}\.alog""")))
+        val file = File(dir, name1).apply {
+            writeText("day1")
+            setLastModified(1_000L)
+        }
+        assertTrue(gen.isSameGeneratedName(file, "alog", day1))
+        assertTrue(!gen.isSameGeneratedName(file, "alog", day2))
+
+        val other = File(dir, "alog_push_${LogFileManager.dateStamp(day1)}.alog").apply {
+            writeText("push")
+            setLastModified(1_000L)
+        }
+        val mgr = LogFileManager(
+            dir = dir,
+            namePrefix = "alog",
+            maxFileSize = 1024,
+            retainDays = 7,
+            maxTotalBytes = 64 * 1024,
+            nameGenerator = gen,
+            backupStrategy = NeverBackupStrategy(),
+        )
+        mgr.cleanup()
+        assertTrue(!file.exists())
+        assertTrue(other.exists())
+    }
+
+    @Test
+    fun defaultShardingKeepsSeqInName() {
+        val dir = tmp.newFolder("seq")
+        val name = DateFileNameGenerator(maxFileSize = 1024).nextName(dir, "alog", 1_724_000_000_000L)
+        assertTrue(name.matches(Regex("""alog_\d{8}_\d+\.alog""")))
+    }
 }

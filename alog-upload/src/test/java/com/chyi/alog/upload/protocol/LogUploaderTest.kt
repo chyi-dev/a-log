@@ -88,6 +88,37 @@ class AlogFileCollectorTest {
             ),
         )
     }
+
+    @Test
+    fun recentDaysParsesDateOnlyFileNameWithoutSeq() {
+        val old = tmp.newFile("alog_20200101.alog")
+        old.writeText("old")
+        old.setLastModified(System.currentTimeMillis())
+        val recent = tmp.newFile("alog_20991231.alog")
+        recent.writeText("new")
+        recent.setLastModified(1L)
+        val selected = com.chyi.alog.upload.collector.AlogFileCollector.select(
+            listOf(old, recent),
+            maxBytes = 50_000,
+            recentDays = 2,
+            nowMs = SimpleDateFormatHolder.parse("20991231"),
+        )
+        assertEquals(listOf(recent.name), selected.map { it.name })
+        assertTrue(
+            com.chyi.alog.upload.collector.AlogFileCollector.inWindow(
+                recent,
+                recentDays = 2,
+                nowMs = SimpleDateFormatHolder.parse("20991231"),
+            ),
+        )
+        assertFalse(
+            com.chyi.alog.upload.collector.AlogFileCollector.inWindow(
+                old,
+                recentDays = 2,
+                nowMs = SimpleDateFormatHolder.parse("20991231"),
+            ),
+        )
+    }
 }
 
 private object SimpleDateFormatHolder {

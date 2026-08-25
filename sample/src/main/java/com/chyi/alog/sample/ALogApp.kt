@@ -33,7 +33,7 @@ class ALogApp : Application() {
         super.onCreate()
         ProcessInfo.pid = Process.myPid()
         ProcessInfo.processName = currentProcessName()
-        logDir = File(filesDir, "alog")
+        logDir = SharedAlogDirs.filesDir()
         alogCacheDir = ALogPaths.cacheRoot(filesDir)
         val namePrefix = ALogPaths.namePrefix(ProcessInfo.processName, packageName)
         logDir.mkdirs()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -86,6 +88,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"/logs/tasks/([^/]+)/export\.txt$", parsed.path)
         if m:
             return self._export_txt(m.group(1), parse_qs(parsed.query))
+        m = re.match(r"/logs/tasks/([^/]+)/export\.source$", parsed.path)
+        if m:
+            return self._export_source(m.group(1))
         m = re.match(r"/logs/tasks/([^/]+)/details$", parsed.path)
         if m:
             return self._details(m.group(1), parse_qs(parsed.query))
@@ -342,6 +347,77 @@ class Handler(BaseHTTPRequestHandler):
             content_type="text/plain; charset=utf-8",
             extra_headers={"Content-Disposition": 'attachment; filename="%s.txt"' % upload_id},
         )
+
+    def _export_source(self, upload_id: str) -> None:
+        task = self._load_task(upload_id)
+        if not task:
+            return self._send(404, {"error": "unknown task"})
+        self._assemble_and_decode(task, force=False)
+        task = self._load_task(upload_id) or task
+        paths = self._collect_source_files(task)
+        if not paths:
+            return self._send(404, {"error": "no source files"})
+        if len(paths) == 1:
+            path, name = paths[0]
+            with open(path, "rb") as f:
+                body = f.read()
+            return self._send(
+                200,
+                body,
+                content_type="application/octet-stream",
+                extra_headers={"Content-Disposition": 'attachment; filename="%s"' % name},
+            )
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            used = set()
+            for path, name in paths:
+                arc = name
+                if arc in used:
+                    arc = os.path.basename(path)
+                used.add(arc)
+                zf.write(path, arcname=arc)
+        return self._send(
+            200,
+            buf.getvalue(),
+            content_type="application/zip",
+            extra_headers={"Content-Disposition": 'attachment; filename="%s.zip"' % upload_id},
+        )
+
+    def _collect_source_files(self, task: dict) -> list:
+        upload_id = task.get("uploadId") or ""
+        assembled_dir = os.path.join(DATA, "files", upload_id)
+        out = []
+        seen = set()
+        for item in task.get("files") or []:
+            path = None
+            name = item.get("storedName") or item.get("name") or (item.get("fileId") or "file") + ".alog"
+            if item.get("storedName"):
+                candidate = os.path.join(assembled_dir, item["storedName"])
+                if os.path.isfile(candidate):
+                    path = candidate
+            if path is None and item.get("name"):
+                candidate = os.path.join(assembled_dir, item["name"])
+                if os.path.isfile(candidate):
+                    path = candidate
+            if path is None and item.get("skip"):
+                hit = self._find_file_by_hash(item.get("sha256"))
+                if hit and os.path.isfile(hit):
+                    path = hit
+                    name = item.get("name") or os.path.basename(hit)
+            if path is None and item.get("fileId"):
+                candidate = os.path.join(assembled_dir, item["fileId"] + ".alog")
+                if os.path.isfile(candidate):
+                    path = candidate
+            if path and path not in seen:
+                seen.add(path)
+                out.append((path, os.path.basename(name)))
+        if not out and os.path.isdir(assembled_dir):
+            for fname in sorted(os.listdir(assembled_dir)):
+                path = os.path.join(assembled_dir, fname)
+                if os.path.isfile(path) and path not in seen:
+                    seen.add(path)
+                    out.append((path, fname))
+        return out
 
     def _create_fetch_task(self) -> None:
         body = json_body(self)

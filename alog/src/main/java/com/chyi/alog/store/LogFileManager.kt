@@ -28,7 +28,7 @@ open class LogFileManager(
         val now = System.currentTimeMillis()
         if (existing != null && existing.exists() &&
             !backupStrategy.shouldRotate(existing, maxFileSize) &&
-            isSameGeneratedName(existing, now)
+            nameGenerator.isSameGeneratedName(existing, namePrefix, now)
         ) {
             return existing
         }
@@ -56,16 +56,11 @@ open class LogFileManager(
 
     fun cleanup() {
         if (!dir.exists()) return
-        val pattern = Regex("^" + Regex.escape(namePrefix) + "_\\d{8}_\\d+\\.alog$")
+        val pattern = nameGenerator.cleanupPattern(namePrefix)
         val files = dir.listFiles { f -> f.isFile && pattern.matches(f.name) }?.toList().orEmpty()
         for (file in cleanStrategy.selectForDeletion(files, retainDays, maxTotalBytes)) {
             file.delete()
         }
-    }
-
-    private fun isSameGeneratedName(file: File, nowMs: Long): Boolean {
-        val todayPrefix = "${namePrefix}_${dateStamp(nowMs)}_"
-        return file.name.startsWith(todayPrefix) && file.name.endsWith(".alog")
     }
 
     companion object {

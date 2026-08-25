@@ -36,8 +36,8 @@ object AlogFileCollector {
     }
 
     private fun fileTimestamp(file: File): Long {
-        val datePart = file.name.substringAfter('_', "").substringBefore('_', "")
-        if (datePart.length == 8 && datePart.all { it.isDigit() }) {
+        val datePart = DATE_IN_NAME.find(file.name)?.value
+        if (datePart != null) {
             return try {
                 SimpleDateFormat("yyyyMMdd", Locale.US).parse(datePart)?.time ?: file.lastModified()
             } catch (_: Throwable) {
@@ -46,4 +46,6 @@ object AlogFileCollector {
         }
         return file.lastModified()
     }
+
+    private val DATE_IN_NAME = Regex("(?<!\\d)\\d{8}(?!\\d)")
 }

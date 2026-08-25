@@ -328,6 +328,65 @@ class IngestServerTest(unittest.TestCase):
         self.assertEqual(200, code)
         self.assertEqual([], details["items"])
 
+    def test_export_source_single_and_zip(self):
+        import io
+        import zipfile
+
+        upload_one = "u-src-one"
+        assembled = Path(self.data) / "files" / upload_one
+        assembled.mkdir(parents=True)
+        blob = make_unencrypted_alog(['{"ts":1,"level":"INFO","type":"code","tag":"T","msg":"one"}'])
+        (assembled / "a.alog").write_bytes(blob)
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        (tasks / (upload_one + ".json")).write_text(json.dumps({
+            "uploadId": upload_one,
+            "status": "done",
+            "meta": {},
+            "files": [{"fileId": "f-1", "name": "a.alog", "storedName": "a.alog", "skip": False}],
+            "details": [],
+        }), encoding="utf-8")
+
+        status, headers, body = self._raw_get("/logs/tasks/%s/export.source" % upload_one)
+        self.assertEqual(200, status)
+        self.assertEqual("application/octet-stream", headers.get("content-type"))
+        self.assertIn('filename="a.alog"', headers.get("content-disposition", ""))
+        self.assertEqual(blob, body)
+
+        upload_multi = "u-src-multi"
+        multi_dir = Path(self.data) / "files" / upload_multi
+        multi_dir.mkdir(parents=True)
+        b1 = make_unencrypted_alog(['{"ts":1,"level":"INFO","type":"code","tag":"T","msg":"a"}'])
+        b2 = make_unencrypted_alog(['{"ts":2,"level":"INFO","type":"code","tag":"T","msg":"b"}'])
+        (multi_dir / "one.alog").write_bytes(b1)
+        (multi_dir / "two.alog").write_bytes(b2)
+        (tasks / (upload_multi + ".json")).write_text(json.dumps({
+            "uploadId": upload_multi,
+            "status": "done",
+            "meta": {},
+            "files": [
+                {"fileId": "f-1", "name": "one.alog", "storedName": "one.alog", "skip": False},
+                {"fileId": "f-2", "name": "two.alog", "storedName": "two.alog", "skip": False},
+            ],
+            "details": [],
+        }), encoding="utf-8")
+
+        status, headers, body = self._raw_get("/logs/tasks/%s/export.source" % upload_multi)
+        self.assertEqual(200, status)
+        self.assertEqual("application/zip", headers.get("content-type"))
+        self.assertIn('filename="u-src-multi.zip"', headers.get("content-disposition", ""))
+        with zipfile.ZipFile(io.BytesIO(body)) as zf:
+            names = sorted(zf.namelist())
+            self.assertEqual(["one.alog", "two.alog"], names)
+            self.assertEqual(b1, zf.read("one.alog"))
+            self.assertEqual(b2, zf.read("two.alog"))
+
+        status, _, _ = self._raw_get("/logs/tasks/%s/export.source" % upload_one, auth=False)
+        self.assertEqual(401, status)
+
+        status, _, _ = self._raw_get("/logs/tasks/u-missing/export.source")
+        self.assertEqual(404, status)
+
 
 if __name__ == "__main__":
     unittest.main()

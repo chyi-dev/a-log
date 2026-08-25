@@ -389,6 +389,7 @@
         <label class="field">关键字<input id="detailQ" placeholder="全文搜索" /></label>
         <button id="btnApplyFilter" class="btn btn-primary" type="button">筛选</button>
         <button id="btnDownloadTxt" class="btn btn-ghost" type="button" disabled>下载 txt</button>
+        <button id="btnDownloadSource" class="btn btn-ghost" type="button" disabled>下载源文件</button>
       </div>
       <div class="pagination">
         <button id="btnPrev" class="btn btn-sm" type="button" disabled>上一页</button>
@@ -555,6 +556,18 @@
             }
           };
           td.appendChild(dl);
+          const ds = document.createElement("button");
+          ds.className = "btn btn-sm btn-ghost";
+          ds.type = "button";
+          ds.textContent = "下载源文件";
+          ds.onclick = async () => {
+            try {
+              await downloadSource(t.uploadId);
+            } catch (e) {
+              setDetailMeta("下载源文件失败: " + e.message, true);
+            }
+          };
+          td.appendChild(ds);
           tr.appendChild(td);
           tb.appendChild(tr);
         }
@@ -583,6 +596,7 @@
       currentUploadId = id;
       currentPage = 0;
       document.getElementById("btnDownloadTxt").disabled = false;
+      document.getElementById("btnDownloadSource").disabled = false;
       setDetailActive(true);
       if (decode) {
         setDetailMeta("正在解密 <strong>" + escapeHtml(id) + "</strong> …");
@@ -688,6 +702,15 @@
       }
     };
 
+    document.getElementById("btnDownloadSource").onclick = async () => {
+      if (!currentUploadId) return;
+      try {
+        await downloadSource(currentUploadId);
+      } catch (e) {
+        setDetailMeta("下载源文件失败: " + e.message, true);
+      }
+    };
+
     async function downloadLegacyTxt(uploadId) {
       const qs = detailQuery();
       const res = await fetch(apiUrl("/logs/tasks/" + uploadId + "/export.txt?" + qs), {
@@ -698,6 +721,22 @@
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = uploadId + ".txt";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    async function downloadSource(uploadId) {
+      const res = await fetch(apiUrl("/logs/tasks/" + uploadId + "/export.source"), {
+        headers: { Authorization: "Bearer " + TOKEN },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = /filename="([^"]+)"/.exec(cd);
+      const filename = (m && m[1]) || uploadId + ".alog";
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(a.href);
     }

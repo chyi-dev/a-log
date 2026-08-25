@@ -82,3 +82,5 @@ Return：
 
 - `GET /logs/tasks?unionId=&deviceId=&fromDate=&toDate=`
 - `GET /logs/tasks/{taskId}/details?type=&q=&page=&size=`
+- `GET /logs/tasks/{taskId}/export.txt?type=&tag=&q=` — 明文 txt
+- `GET /logs/tasks/{taskId}/export.source` — 源 `.alog`（单文件原样；多文件 zip）

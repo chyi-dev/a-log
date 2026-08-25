@@ -77,6 +77,12 @@ class FilePrinter private constructor(
 
         /** 构建文件 Printer。MMAP 模式封块时 deflate 压缩后写入。 */
         fun build(): FilePrinter {
+            val resolvedBackup = FilePrinterDefaults.resolveBackup(backupStrategy)
+            val resolvedNameGenerator = FilePrinterDefaults.resolveNameGenerator(
+                fileNameGenerator,
+                resolvedBackup,
+                maxFileSize,
+            )
             val writer = writerOverride ?: when (writerMode) {
                 WriterMode.SIMPLE -> SimpleWriter(
                     dir = folder,
@@ -84,8 +90,8 @@ class FilePrinter private constructor(
                     maxFileSize = maxFileSize,
                     retainDays = retainDays,
                     maxTotalBytes = maxTotalBytes,
-                    nameGenerator = fileNameGenerator,
-                    backupStrategy = backupStrategy,
+                    nameGenerator = resolvedNameGenerator,
+                    backupStrategy = resolvedBackup,
                     cleanStrategy = cleanStrategy,
                 )
                 WriterMode.MMAP -> MmapLogWriter(
@@ -95,8 +101,8 @@ class FilePrinter private constructor(
                     retainDays = retainDays,
                     maxTotalBytes = maxTotalBytes,
                     onInternal = onInternal,
-                    nameGenerator = fileNameGenerator,
-                    backupStrategy = backupStrategy,
+                    nameGenerator = resolvedNameGenerator,
+                    backupStrategy = resolvedBackup,
                     cleanStrategy = cleanStrategy,
                     pid = if (pid != 0) pid else android.os.Process.myPid(),
                     cacheDir = cacheDir,
