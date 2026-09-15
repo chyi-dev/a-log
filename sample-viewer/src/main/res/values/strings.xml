@@ -5,6 +5,10 @@
     <string name="btn_refresh">刷新列表</string>
     <string name="btn_grant_storage">授予存储权限</string>
     <string name="btn_save_txt">另存为 txt</string>
+    <string name="btn_parse_serial">解析串口</string>
+    <string name="btn_show_original">显示原文</string>
+    <string name="parsing_serial">正在解析串口…</string>
+    <string name="parse_serial_failed">串口解析失败: %1$s</string>
     <string name="empty_list">暂无 .alog 文件\n请先在 sample 中写日志并 flush</string>
     <string name="need_storage">需要「所有文件访问」权限以读取 Documents/a-log/files</string>
     <string name="decoding">正在解密…</string>

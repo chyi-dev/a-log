@@ -44,5 +44,6 @@ dependencies {
     implementation(libs.google.material)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.activity)
+    implementation(libs.androidx.recyclerview)
     testImplementation(libs.junit)
 }

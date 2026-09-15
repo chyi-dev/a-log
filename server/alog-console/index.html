@@ -270,6 +270,23 @@
       word-break: break-all;
     }
 
+    .msg-cell {
+      max-width: 520px;
+      word-break: break-all;
+    }
+
+    .serial-notes {
+      margin: 6px 0 0;
+      padding: 8px 10px;
+      background: var(--bg);
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.75rem;
+      color: var(--muted);
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
+
     .badge {
       display: inline-block;
       padding: 2px 8px;
@@ -388,7 +405,9 @@
         <label class="field">tag<input id="detailTag" placeholder="精确匹配" /></label>
         <label class="field">关键字<input id="detailQ" placeholder="全文搜索" /></label>
         <button id="btnApplyFilter" class="btn btn-primary" type="button">筛选</button>
+        <button id="btnParseSerial" class="btn btn-ghost" type="button" disabled>解析串口</button>
         <button id="btnDownloadTxt" class="btn btn-ghost" type="button" disabled>下载 txt</button>
+        <button id="btnDownloadSerialTxt" class="btn btn-ghost" type="button" disabled>下载串口解析 txt</button>
         <button id="btnDownloadSource" class="btn btn-ghost" type="button" disabled>下载源文件</button>
       </div>
       <div class="pagination">
@@ -580,6 +599,7 @@
     let currentUploadId = "";
     let currentPage = 0;
     let currentTotal = 0;
+    let serialAnnotate = false;
 
     function setDetailMeta(text, isError) {
       const el = document.getElementById("detailMeta");
@@ -592,11 +612,20 @@
       document.getElementById("sectionDetail").classList.toggle("card-active", active);
     }
 
+    function syncSerialButtons() {
+      const has = !!currentUploadId;
+      document.getElementById("btnParseSerial").disabled = !has;
+      document.getElementById("btnDownloadTxt").disabled = !has;
+      document.getElementById("btnDownloadSerialTxt").disabled = !has;
+      document.getElementById("btnDownloadSource").disabled = !has;
+      document.getElementById("btnParseSerial").textContent = serialAnnotate ? "显示原文" : "解析串口";
+    }
+
     async function openDetails(id, decode) {
       currentUploadId = id;
       currentPage = 0;
-      document.getElementById("btnDownloadTxt").disabled = false;
-      document.getElementById("btnDownloadSource").disabled = false;
+      serialAnnotate = false;
+      syncSerialButtons();
       setDetailActive(true);
       if (decode) {
         setDetailMeta("正在解密 <strong>" + escapeHtml(id) + "</strong> …");
@@ -618,6 +647,7 @@
       if (typ) qs.set("type", typ);
       if (tag) qs.set("tag", tag);
       if (q) qs.set("q", q);
+      if (serialAnnotate) qs.set("serial", "1");
       if (extra) Object.keys(extra).forEach((k) => qs.set(k, extra[k]));
       return qs;
     }
@@ -632,7 +662,8 @@
       if (currentPage >= pages) currentPage = pages - 1;
       setDetailMeta(
         "<strong>" + escapeHtml(currentUploadId) + "</strong> 共 " + currentTotal +
-        " 条 · 第 " + (currentPage + 1) + " / " + pages + " 页"
+        " 条 · 第 " + (currentPage + 1) + " / " + pages + " 页" +
+        (serialAnnotate ? " · 串口解译开" : "")
       );
       document.getElementById("btnPrev").disabled = currentPage <= 0;
       document.getElementById("btnNext").disabled = currentPage + 1 >= pages;
@@ -647,12 +678,17 @@
         const tr = document.createElement("tr");
         tr.className = "clickable";
         const lv = row.level || "";
+        const notes = row.serialNotes || [];
+        let msgHtml = `<div class="msg" title="${escapeHtml(row.msg || "")}">${escapeHtml(row.msg || JSON.stringify(row))}</div>`;
+        if (notes.length) {
+          msgHtml += `<pre class="serial-notes">${escapeHtml(notes.map((n) => "  " + n).join("\n"))}</pre>`;
+        }
         tr.innerHTML =
           `<td>${escapeHtml(fmtTs(row.ts))}</td>` +
           `<td class="${levelClass(lv)}">${escapeHtml(lv)}</td>` +
           `<td>${escapeHtml(row.type || "")}</td>` +
           `<td>${escapeHtml(row.tag || "")}</td>` +
-          `<td class="msg" title="${escapeHtml(row.msg || "")}">${escapeHtml(row.msg || JSON.stringify(row))}</td>`;
+          `<td class="msg-cell">${msgHtml}</td>`;
         tr.onclick = () => {
           const next = tr.nextSibling;
           if (next && next.classList && next.classList.contains("row-open")) {
@@ -693,12 +729,33 @@
       await loadDetailsPage();
     };
 
+    document.getElementById("btnParseSerial").onclick = async () => {
+      if (!currentUploadId) return;
+      serialAnnotate = !serialAnnotate;
+      syncSerialButtons();
+      currentPage = 0;
+      try {
+        await loadDetailsPage();
+      } catch (e) {
+        setDetailMeta("串口解析失败: " + e.message, true);
+      }
+    };
+
     document.getElementById("btnDownloadTxt").onclick = async () => {
       if (!currentUploadId) return;
       try {
-        await downloadLegacyTxt(currentUploadId);
+        await downloadLegacyTxt(currentUploadId, { serial: false });
       } catch (e) {
         setDetailMeta("下载失败: " + e.message, true);
+      }
+    };
+
+    document.getElementById("btnDownloadSerialTxt").onclick = async () => {
+      if (!currentUploadId) return;
+      try {
+        await downloadLegacyTxt(currentUploadId, { serial: true });
+      } catch (e) {
+        setDetailMeta("下载串口解析失败: " + e.message, true);
       }
     };
 
@@ -711,8 +768,10 @@
       }
     };
 
-    async function downloadLegacyTxt(uploadId) {
+    async function downloadLegacyTxt(uploadId, opts) {
       const qs = detailQuery();
+      if (opts && opts.serial) qs.set("serial", "1");
+      else qs.delete("serial");
       const res = await fetch(apiUrl("/logs/tasks/" + uploadId + "/export.txt?" + qs), {
         headers: { Authorization: "Bearer " + TOKEN },
       });
@@ -720,7 +779,7 @@
       const blob = await res.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = uploadId + ".txt";
+      a.download = opts && opts.serial ? uploadId + "-serial.txt" : uploadId + ".txt";
       a.click();
       URL.revokeObjectURL(a.href);
     }

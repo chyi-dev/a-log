@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from decode_alog import decode_file
+import gs_serial
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(ROOT, "data")
@@ -320,7 +321,15 @@ class Handler(BaseHTTPRequestHandler):
         page = int((query.get("page") or ["0"])[0])
         size = int((query.get("size") or ["200"])[0])
         start = page * size
-        self._send(200, {"total": len(rows), "items": rows[start:start + size]})
+        items = rows[start:start + size]
+        if _serial_enabled(query):
+            enriched = []
+            for row in items:
+                item = dict(row)
+                item["serialNotes"] = gs_serial.annotate_notes(to_legacy_line(row))
+                enriched.append(item)
+            items = enriched
+        self._send(200, {"total": len(rows), "items": items})
 
     def _details_summary(self, upload_id: str, query: dict) -> None:
         task = self._load_task(upload_id)
@@ -340,12 +349,17 @@ class Handler(BaseHTTPRequestHandler):
             self._assemble_and_decode(task, force=True)
             task = self._load_task(upload_id) or task
         rows = filter_detail_rows(task.get("details") or [], query)
-        body = rows_to_legacy_txt(rows).encode("utf-8")
+        text = rows_to_legacy_txt(rows)
+        filename = "%s.txt" % upload_id
+        if _serial_enabled(query):
+            text = gs_serial.annotate_text(text)
+            filename = "%s-serial.txt" % upload_id
+        body = text.encode("utf-8")
         self._send(
             200,
             body,
             content_type="text/plain; charset=utf-8",
-            extra_headers={"Content-Disposition": 'attachment; filename="%s.txt"' % upload_id},
+            extra_headers={"Content-Disposition": 'attachment; filename="%s"' % filename},
         )
 
     def _export_source(self, upload_id: str) -> None:
@@ -530,6 +544,10 @@ class Handler(BaseHTTPRequestHandler):
 def _query_first(query: dict, key: str, default=None):
     values = query.get(key) or [default]
     return values[0]
+
+
+def _serial_enabled(query: dict) -> bool:
+    return str(_query_first(query, "serial", "") or "").lower() in ("1", "true", "yes")
 
 
 def to_legacy_line(row: dict) -> str:

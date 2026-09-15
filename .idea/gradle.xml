@@ -13,6 +13,7 @@
             <option value="$PROJECT_DIR$/alog-decode" />
             <option value="$PROJECT_DIR$/alog-upload" />
             <option value="$PROJECT_DIR$/sample" />
+            <option value="$PROJECT_DIR$/sample-viewer" />
             <option value="$PROJECT_DIR$/sample-xlog" />
           </set>
         </option>

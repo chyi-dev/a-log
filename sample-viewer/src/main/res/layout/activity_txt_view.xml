@@ -19,18 +19,18 @@
         android:layout_height="wrap_content"
         android:text="@string/btn_save_txt" />
 
-    <ScrollView
+    <Button
+        android:id="@+id/btnParseSerial"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:enabled="false"
+        android:text="@string/btn_parse_serial" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/lineList"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="8dp"
-        android:layout_weight="1">
-
-        <TextView
-            android:id="@+id/txtContent"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textIsSelectable="true"
-            android:textSize="12sp" />
-    </ScrollView>
+        android:layout_weight="1"
+        android:scrollbars="vertical" />
 </LinearLayout>

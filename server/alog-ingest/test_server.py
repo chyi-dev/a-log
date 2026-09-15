@@ -191,6 +191,57 @@ class IngestServerTest(unittest.TestCase):
         status, _, _ = self._raw_get("/logs/tasks/%s/export.txt" % upload_id, auth=False)
         self.assertEqual(401, status)
 
+    def test_export_txt_serial_annotates(self):
+        upload_id = "u-export-serial"
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        rows = [
+            {"ts": 100, "type": "code", "tag": "Coffee-Machine", "msg": "/dev/ttyS3---发送：AA 55 02 20 21", "level": "info"},
+            {"ts": 200, "type": "code", "tag": "Coffee-Machine", "msg": "/dev/ttyS4---发送：AA 55 02 1E 1F", "level": "info"},
+        ]
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "done",
+            "meta": {},
+            "files": [],
+            "details": rows,
+        }), encoding="utf-8")
+
+        status, headers, body = self._raw_get("/logs/tasks/%s/export.txt?serial=1" % upload_id)
+        self.assertEqual(200, status)
+        self.assertIn('filename="u-export-serial-serial.txt"', headers.get("content-disposition", ""))
+        text = body.decode("utf-8")
+        self.assertIn("无 Modbus 载荷", text)
+        self.assertIn("查询主控运行状态", text)
+
+    def test_details_serial_notes(self):
+        upload_id = "u-details-serial"
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        rows = [
+            {"ts": 100, "type": "code", "tag": "Coffee-Machine", "msg": "/dev/ttyS4---发送：AA 55 02 1E 1F", "level": "info"},
+            {"ts": 200, "type": "code", "tag": "ALog", "msg": "hello", "level": "info"},
+        ]
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "done",
+            "meta": {},
+            "files": [],
+            "details": rows,
+        }), encoding="utf-8")
+
+        code, data = self._json("GET", "/logs/tasks/%s/details?serial=1" % upload_id)
+        self.assertEqual(200, code)
+        items = data["items"]
+        self.assertEqual(2, len(items))
+        self.assertIn("serialNotes", items[0])
+        self.assertTrue(any("查询主控运行状态" in n for n in items[0]["serialNotes"]))
+        self.assertEqual([], items[1]["serialNotes"])
+
+        code, plain = self._json("GET", "/logs/tasks/%s/details" % upload_id)
+        self.assertEqual(200, code)
+        self.assertNotIn("serialNotes", plain["items"][0])
+
     def test_init_upload_rejects_empty_files(self):
         code, body = self._json("POST", "/logs/uploads", {
             "appId": "a",
