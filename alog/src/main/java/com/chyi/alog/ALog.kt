@@ -29,8 +29,8 @@ object ALog {
     /**
      * 初始化门面。可传入一个或多个 [Printer]，不传入的通道不会有输出。
      *
-     * Debug 常见组合：[com.chyi.alog.printer.AndroidPrinter] + 文件 Printer；
-     * Release 常见仅文件 Printer。
+     * Debug 常见组合：[com.chyi.alog.printer.ALogPrinters.defaults]（AndroidPrinter + 文件）；
+     * Release 常见仅文件 Printer（[ALogDefaults.includeAndroidPrinter] 为 false）。
      *
      * @throws IllegalStateException 不会在此处抛出；未初始化时由后续日志方法抛出
      */

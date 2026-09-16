@@ -1,5 +1,6 @@
 package com.chyi.alog.upload.persist
 
+import org.json.JSONObject
 import java.io.File
 
 class ChunkStateStore(private val auditDir: File) {
@@ -16,6 +17,50 @@ class ChunkStateStore(private val auditDir: File) {
 
     private fun file(uploadId: String, fileId: String) = File(auditDir, "$uploadId-$fileId.state")
 }
+
+/** Remembers the last negotiated upload so a later retry can continue remaining chunks. */
+class UploadSessionStore(private val auditDir: File) {
+    fun load(): JSONObject? {
+        val file = file()
+        if (!file.isFile) return null
+        return try {
+            JSONObject(file.readText())
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun save(session: JSONObject) {
+        auditDir.mkdirs()
+        file().writeText(session.toString())
+    }
+
+    fun clear() {
+        file().delete()
+    }
+
+    fun matches(session: JSONObject, fingerprints: List<FileFingerprint>): Boolean {
+        val files = session.optJSONArray("files") ?: return false
+        if (files.length() != fingerprints.size) return false
+        val byName = fingerprints.associateBy { it.name }
+        for (i in 0 until files.length()) {
+            val item = files.getJSONObject(i)
+            val local = byName[item.optString("name")] ?: return false
+            if (local.sha256 != item.optString("sha256")) return false
+            if (local.size != item.optLong("size")) return false
+        }
+        return session.optString("uploadId").isNotBlank()
+    }
+
+    private fun file() = File(auditDir, "upload_session.json")
+}
+
+data class FileFingerprint(
+    val name: String,
+    val path: String,
+    val size: Long,
+    val sha256: String,
+)
 
 class UploadAuditLog(private val auditDir: File) {
     fun line(text: String) {

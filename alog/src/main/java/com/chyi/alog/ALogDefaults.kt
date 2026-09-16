@@ -24,4 +24,11 @@ object ALogDefaults {
     const val FLUSH_WAIT_SECONDS = 60L
     /** mmap 缓存目录名，相对 `filesDir`。 */
     const val CACHE_DIR_NAME = "alog-cache"
+
+    /**
+     * Release 默认不得注入 [com.chyi.alog.printer.AndroidPrinter]（无 ALog Logcat）。
+     * Debug 默认可同时注册 AndroidPrinter 与 FilePrinter。
+     */
+    @JvmStatic
+    fun includeAndroidPrinter(debug: Boolean): Boolean = debug
 }

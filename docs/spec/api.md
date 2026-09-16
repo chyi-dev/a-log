@@ -17,8 +17,8 @@ ALog.init(config: LogConfiguration, vararg printers: Printer)
 
 每个 Printer 都会收到同一条（经拦截器处理后的）`LogItem`。不传入的通道不会有输出。
 
-- Debug 默认：`AndroidPrinter` + `FilePrinter`
-- Release 默认：仅 `FilePrinter`
+- Debug 默认：`AndroidPrinter` + `FilePrinter`（`ALogPrinters.defaults(debug = true, filePrinter)` / `ALogDefaults.includeAndroidPrinter(true)`）
+- Release 默认：仅 `FilePrinter`（`includeAndroidPrinter(false)`，不注入 `AndroidPrinter`）
 
 ## LogConfiguration.Builder
 
