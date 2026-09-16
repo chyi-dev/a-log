@@ -63,7 +63,7 @@ adb logcat -d -s ALog:V ALog:*
 
 根因（f62fa64 上 7872 行丢弃）：mmap 异步队列只有 1024 槽，`acceptMore()` 在队列满后直接丢掉后续 `ALog.i`，所以单测 `dropped≈7800`、主线程仍偏慢（LogItem/拦截器/队列节点）。现改为 **16384 预分配环形队列**，Release 仅 FilePrinter 时调用线程只入队 level/tag/msg/ts，拦截器与 JSON flatten 在 `alog-store` 执行；1 万条应全部落盘。
 
-- 单元：`FrameJankStatsTest`；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`；`FilePrinterBurstTest`（`callerMs < 40` **且** `dropped=0` **且** decode 出 10000 条 burst，另校验脱敏仍生效）。
+- 单元：`FrameJankStatsTest`；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`；`FilePrinterBurstTest`（`callerMs < 40` **且** `dropped=0` **且** decode 出 10000 条 burst，另校验脱敏仍生效）。Agent JVM：`filePrinterBurst10k callerMs=6 dropped=0 internals=0 decoded=10001 burstLines=10000`（`MmapLimitTest` `callerMs=5 dropped=0`）。
 - 设备：`./gradlew :sample:assembleRelease` 后 `adb install -r sample/build/outputs/apk/release/sample-release.apk`。点「主线程 1 万条」。
 - 模拟器 Release 达标带（`adb logcat -s ALogBurst:I`）：
   - `writeMs`：宜 < 32（JVM 单测常见约 5–15ms；模拟器可略高但仍应低于两帧）
