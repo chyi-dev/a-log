@@ -47,26 +47,40 @@ def check_auth(handler: BaseHTTPRequestHandler) -> bool:
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Speak HTTP/1.1 so Android's OkHttp-backed HttpURLConnection sees a
+    # well-formed response, but always close — keep-alive reuse after
+    # /complete was dropping the next POST /logs/fetch-ack with
+    # "unexpected end of stream".
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
     def _send(self, code: int, body, content_type: str = "application/json", extra_headers=None) -> None:
         data = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
+        self.close_connection = True
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Connection", "close")
         self.send_header("Access-Control-Allow-Origin", "*")
         if extra_headers:
             for key, value in extra_headers.items():
                 self.send_header(key, value)
         self.end_headers()
         self.wfile.write(data)
+        try:
+            self.wfile.flush()
+        except OSError:
+            pass
 
     def do_OPTIONS(self) -> None:
+        self.close_connection = True
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Authorization,Content-Type,Content-SHA256,Content-Range")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS")
+        self.send_header("Connection", "close")
         self.end_headers()
 
     def do_GET(self) -> None:

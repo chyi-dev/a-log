@@ -70,7 +70,10 @@ class UploadWorker(
                     Result.success()
                 }
             }
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            if (reason == "fetch") {
+                logFetch(phaseLog(t))
+            }
             Result.retry()
         }
     }
@@ -82,31 +85,35 @@ class UploadWorker(
         unionId: String,
         deviceId: String,
     ): Result {
-        val pending = try {
-            uploader.pendingFetchTask(unionId, deviceId)
+        return try {
+            val files = if (uploader.hasPersistedFetchAck()) {
+                emptyList()
+            } else {
+                prepareFiles(root, cacheRoot)
+            }
+            val result = uploader.runFetch(files, unionId, deviceId)
+            if (result == null) {
+                logFetch("fetch skipped: no pending task")
+            } else if (result.uploadId.isEmpty()) {
+                logFetch("fetch skipped ack: empty upload taskId=${result.fetchTaskId.orEmpty()}")
+            } else {
+                logFetch("fetch acked taskId=${result.fetchTaskId.orEmpty()} uploadId=${result.uploadId}")
+            }
+            Result.success()
         } catch (t: Throwable) {
-            logFetch("fetch pending lookup failed: ${t.message}")
-            return Result.retry()
+            logFetch(phaseLog(t))
+            Result.retry()
         }
-        if (pending == null) {
-            logFetch("fetch skipped: no pending task")
-            return Result.success()
+    }
+
+    private fun phaseLog(t: Throwable): String {
+        val msg = t.message.orEmpty().ifBlank { t.javaClass.simpleName }
+        return when {
+            msg.startsWith("fetch pending lookup failed") ||
+                msg.startsWith("fetch upload failed") ||
+                msg.startsWith("fetch ack failed") -> msg
+            else -> "fetch failed: $msg"
         }
-        val files = prepareFiles(root, cacheRoot)
-        val result = uploader.upload(
-            files,
-            "fetch",
-            fromMs = pending.fromMs,
-            toMs = pending.toMs,
-            byteLimit = pending.maxBytes,
-        )
-        if (result.uploadId.isEmpty()) {
-            logFetch("fetch skipped ack: empty upload taskId=${pending.taskId}")
-            return Result.success()
-        }
-        uploader.ackFetch(pending.taskId, result.uploadId, ok = true)
-        logFetch("fetch acked taskId=${pending.taskId} uploadId=${result.uploadId}")
-        return Result.success()
     }
 
     private fun logFetch(message: String) {

@@ -614,6 +614,50 @@ class IngestServerTest(unittest.TestCase):
         self.assertTrue(again.get("idempotent"))
         self.assertEqual("u-from-device", again["uploadId"])
 
+    def test_responses_send_connection_close(self):
+        status, headers, _ = self._raw_get("/logs/fetch-pending?unionId=demo-user&deviceId=dev-1")
+        self.assertEqual(200, status)
+        self.assertEqual("close", headers.get("connection"))
+
+    def test_complete_then_ack_on_reused_http_connection(self):
+        code, created = self._json("POST", "/logs/fetch-tasks", {
+            "unionId": "demo-user",
+            "deviceId": "dev-1",
+        })
+        self.assertEqual(200, code)
+        task_id = created["taskId"]
+        upload_id = "u-keepalive"
+        self._write_task(upload_id, {"unionId": "demo-user"}, details=[
+            {"ts": 1, "msg": "x", "type": "code"},
+        ])
+
+        conn = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer alog-dev",
+            "Connection": "keep-alive",
+        }
+        conn.request("POST", "/logs/uploads/%s/complete" % upload_id, body=b"{}", headers=headers)
+        complete_res = conn.getresponse()
+        complete_headers = {k.lower(): v for k, v in complete_res.getheaders()}
+        complete_body = complete_res.read()
+        self.assertEqual(200, complete_res.status)
+        self.assertEqual("close", complete_headers.get("connection"))
+        self.assertTrue(complete_body)
+
+        ack_raw = json.dumps({
+            "taskId": task_id,
+            "ok": True,
+            "uploadId": upload_id,
+        }).encode("utf-8")
+        conn.request("POST", "/logs/fetch-ack", body=ack_raw, headers=headers)
+        ack_res = conn.getresponse()
+        ack_body = json.loads(ack_res.read().decode("utf-8"))
+        self.assertEqual(200, ack_res.status)
+        self.assertEqual("acked", ack_body["status"])
+        self.assertEqual(upload_id, ack_body["uploadId"])
+        conn.close()
+
     def test_negotiate_stores_file_date_from_push_filename(self):
         code, body = self._json("POST", "/logs/uploads", {
             "appId": "a",

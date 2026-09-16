@@ -120,15 +120,24 @@ Sample 默认 ingest：`http://10.0.2.2:8080`（模拟器访问宿主机）。�
 
 ### 回捞闭环
 
-1. 控制台填 unionId=`demo-user`（与 sample 一致），可选日期窗，点「创建回捞任务」，status=`pending`。
-2. Sample **只点一次**「模拟回捞」（需已有 `.alog` 且网络可达 ingest）。WorkManager 使用唯一工作 `alog-upload`（APPEND）+ 进程内文件锁，不会并行跑多个 UploadWorker。
-3. 控制台「刷新列表」：status=`acked`，`ackedAt` 有值，`uploadId` 可点进详情。ingest 日志里对该 `taskId` 应只有 **一次** 成功 `POST /logs/fetch-ack`（重复 ack 返回 200/`idempotent`，不再 404）。
-4. **无 pending 证明（设备）：** 确认控制台没有 `pending` 任务后，再点一次「模拟回捞」。不要连点。
-   - `adb logcat -s ALogUpload:I` 出现 `fetch skipped: no pending task`
+1. 控制台填 unionId=`demo-user`（与 sample 一致），可选日期窗，点「创建回捞任务」，得到 **一条** pending（记下 `taskId`，例如 `ft-…`）。
+2. Sample **只点一次**「模拟回捞」（需已有 `.alog` 且网络可达 ingest）。不要连点。WorkManager 使用唯一工作 `alog-upload`（APPEND）+ 进程内文件锁。
+3. ingest 访问日志对这一次点按应出现：
+   - `GET /logs/fetch-pending`（一次）
+   - `POST /logs/uploads` + chunks + **`POST /logs/uploads/{uploadId}/complete` 200**
+   - **`POST /logs/fetch-ack` 200**（body 含真实 `taskId` + `uploadId`）
+   - **没有** 约 30s 后的第二次 `POST /logs/uploads`（那是旧版把 ack 失败当成整单 RETRY）
+4. 控制台「刷新列表」：status=`acked`，`ackedAt` 有值，`uploadId` 可点进详情。对该 `taskId` 应只有 **一次** 成功 `POST /logs/fetch-ack`（重复 ack 返回 200/`idempotent`，不再 404）。
+5. logcat：`adb logcat -s ALogUpload:I`
+   - 成功：`fetch acked taskId=ft-… uploadId=u-…`
+   - 阶段失败字符串必须可区分：`fetch pending lookup failed:` / `fetch upload failed:` / `fetch ack failed:`（ack 阶段的 `unexpected end of stream` **不得** 打成 pending lookup）
+6. **无 pending 证明：** 确认控制台没有 `pending` 后，再点一次「模拟回捞」。不要连点。
+   - logcat 出现 `fetch skipped: no pending task`
    - ingest 终端 **没有** 新的 `POST /logs/uploads` 或 `POST /logs/fetch-ack`
    - 控制台回捞列表不会多出 `sample-fetch` 或新的 failed/acked 行
-5. `POST /logs/fetch-ack` 无 taskId → 400；**未知** taskId → 404。已 acked 的 taskId 再 ack → 200（幂等）。
+7. **ack 独立重试（设备）：** 一条 pending → 点一次回捞 → 在 ingest 已打印 `complete` 之后、ack 到达之前断开网络（或防火墙丢 `POST /logs/fetch-ack`）。应看到 logcat `fetch ack failed:`；恢复网络后 Worker 只再发 **ack**（ingest 无第二次 `POST /logs/uploads`），任务变为 `acked`。
+8. `POST /logs/fetch-ack` 无 taskId → 400；**未知** taskId → 404。已 acked 的 taskId 再 ack → 200（幂等）。
 
-失败路径：upload/`complete` 失败时 **不会** ack；Worker 只对 5xx/网络错误 retry。`complete` 409 不重试（避免分片未齐时打爆 ingest）。
+失败路径：upload/`complete` 失败时 **不会** ack；Worker 只对 5xx/网络错误 retry。ack 网络失败重试 **ack-only**（`filesDir/alog-audit/fetch_ack.json`）。`complete` 409 不重试（避免分片未齐时打爆 ingest）。
 
-设备上才能做的：sample 实际上传与 WorkManager 回捞。Agent 覆盖 ingest 幂等 ack/complete，以及 `runFetch`：无 pending 不上传不 ack；上传失败不 ack。
+设备上才能做的：sample 实际上传与 WorkManager 回捞。Agent 覆盖 ingest 幂等 ack/complete/`Connection: close`，以及 `runFetch`：无 pending 不上传不 ack；上传失败不 ack；上传成功 + ack 失败则只重试 ack。

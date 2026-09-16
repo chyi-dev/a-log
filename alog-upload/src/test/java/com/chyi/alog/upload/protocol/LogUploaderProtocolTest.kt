@@ -125,12 +125,17 @@ class LogUploaderProtocolTest {
         val client = uploader(ingest)
         val result = client.runFetch(listOf(file), "u", "d")
         assertEquals(ingest.lastUploadId, result!!.uploadId)
+        assertEquals("ft-real", result.fetchTaskId)
         assertEquals("ft-real", ingest.lastAckTaskId)
         assertEquals(result.uploadId, ingest.lastAckUploadId)
         assertTrue(ingest.lastAckOk)
         assertEquals(1, ingest.ackCount)
         assertEquals(1, ingest.negotiateCount)
         assertEquals(0, ingest.pendingTasks.size)
+        assertFalse(ackStateFile().exists())
+        assertTrue(auditText().contains("fetch pending taskId=ft-real"))
+        assertTrue(auditText().contains("fetch ack pending taskId=ft-real"))
+        assertTrue(auditText().contains("fetch acked taskId=ft-real"))
     }
 
     @Test
@@ -155,11 +160,97 @@ class LogUploaderProtocolTest {
             uploader(ingest).runFetch(listOf(file), "u", "d")
             fail("expected complete to fail")
         } catch (t: IllegalStateException) {
-            assertTrue(t.message.orEmpty().contains("HTTP 503"))
+            val msg = t.message.orEmpty()
+            assertTrue(msg.contains("fetch upload failed"))
+            assertTrue(msg.contains("HTTP 503"))
+            assertFalse(msg.contains("fetch ack failed"))
+            assertFalse(msg.contains("fetch pending lookup failed"))
         }
         assertEquals(0, ingest.ackCount)
+        assertEquals(0, ingest.ackAttempts)
         assertEquals(null, ingest.lastAckTaskId)
         assertEquals(1, ingest.pendingTasks.size)
+        assertFalse(ackStateFile().exists())
+        assertTrue(auditText().contains("fetch upload failed taskId=ft-fail"))
+    }
+
+    @Test
+    fun fetchAckRetriesIndependentlyWithoutRenegotiate() {
+        val ingest = FakeIngest()
+        ingest.pendingTasks.add(JSONObject().put("taskId", "ft-ack-retry"))
+        ingest.failAckRemaining = 2
+        val file = alogFile("alog_20990101_0.alog", 800)
+        val result = uploader(ingest).runFetch(listOf(file), "u", "d")
+        assertEquals(ingest.lastUploadId, result!!.uploadId)
+        assertEquals("ft-ack-retry", ingest.lastAckTaskId)
+        assertEquals(1, ingest.negotiateCount)
+        assertEquals(1, ingest.completeCount)
+        assertEquals(3, ingest.ackAttempts)
+        assertEquals(1, ingest.ackCount)
+        assertEquals(0, ingest.pendingTasks.size)
+        assertFalse(ackStateFile().exists())
+        assertTrue(auditText().contains("retry fetch-ack ft-ack-retry"))
+        assertTrue(auditText().contains("fetch acked taskId=ft-ack-retry"))
+    }
+
+    @Test
+    fun fetchAckFailurePersistsThenResumeSkipsNegotiate() {
+        val ingest = FakeIngest()
+        ingest.pendingTasks.add(JSONObject().put("taskId", "ft-ack-persist"))
+        ingest.failAckRemaining = 5
+        val file = alogFile("alog_20990101_0.alog", 800)
+        try {
+            uploader(ingest).runFetch(listOf(file), "u", "d")
+            fail("expected ack to exhaust retries")
+        } catch (t: IllegalStateException) {
+            val msg = t.message.orEmpty()
+            assertTrue(msg.startsWith("fetch ack failed:"))
+            assertTrue(msg.contains("unexpected end of stream"))
+            assertFalse(msg.contains("pending lookup"))
+        }
+        assertEquals(1, ingest.negotiateCount)
+        assertEquals(1, ingest.completeCount)
+        assertEquals(1, ingest.pendingLookupCount)
+        assertEquals(5, ingest.ackAttempts)
+        assertEquals(0, ingest.ackCount)
+        assertEquals(1, ingest.pendingTasks.size)
+        assertTrue(ackStateFile().exists())
+        assertTrue(auditText().contains("fetch ack pending taskId=ft-ack-persist"))
+        assertTrue(auditText().contains("fetch ack failed taskId=ft-ack-persist"))
+
+        ingest.failAckRemaining = 0
+        val resumed = uploader(ingest).runFetch(listOf(file), "u", "d")
+        assertEquals(ingest.lastUploadId, resumed!!.uploadId)
+        assertEquals("ft-ack-persist", resumed.fetchTaskId)
+        assertEquals(1, ingest.negotiateCount)
+        assertEquals(1, ingest.completeCount)
+        assertEquals(1, ingest.pendingLookupCount)
+        assertEquals(6, ingest.ackAttempts)
+        assertEquals(1, ingest.ackCount)
+        assertEquals(0, ingest.pendingTasks.size)
+        assertFalse(ackStateFile().exists())
+        assertTrue(auditText().contains("resume fetch ack taskId=ft-ack-persist"))
+        assertTrue(auditText().contains("fetch acked taskId=ft-ack-persist"))
+    }
+
+    @Test
+    fun fetchPhaseLogsAreDistinctForPendingLookupVsAck() {
+        val ingest = FakeIngest()
+        ingest.failPendingRemaining = 1
+        try {
+            uploader(ingest).runFetch(listOf(alogFile("alog_20990101_0.alog", 800)), "u", "d")
+            fail("expected pending lookup to fail")
+        } catch (t: IllegalStateException) {
+            val msg = t.message.orEmpty()
+            assertTrue(msg.startsWith("fetch pending lookup failed:"))
+            assertTrue(msg.contains("unexpected end of stream"))
+            assertFalse(msg.contains("fetch ack failed"))
+            assertFalse(msg.contains("fetch upload failed"))
+        }
+        assertEquals(1, ingest.pendingLookupCount)
+        assertEquals(0, ingest.negotiateCount)
+        assertEquals(0, ingest.ackAttempts)
+        assertTrue(auditText().contains("fetch pending lookup failed:"))
     }
 
     @Test
@@ -203,6 +294,8 @@ class LogUploaderProtocolTest {
 
     private fun auditDir(): File = File(tmp.root, "audit").apply { mkdirs() }
 
+    private fun ackStateFile(): File = File(auditDir(), "fetch_ack.json")
+
     private fun auditText(): String = File(auditDir(), "upload_audit.log").readText()
 
     private fun alogFile(name: String, size: Int): File {
@@ -232,6 +325,10 @@ private class FakeIngest : HttpTransport {
     var lastAckOk = false
     var lastAckStatus = ""
     var ackCount = 0
+    var ackAttempts = 0
+    var failAckRemaining = 0
+    var pendingLookupCount = 0
+    var failPendingRemaining = 0
     var completeConflict = false
     val pendingTasks = mutableListOf<JSONObject>()
     private val ackedIds = mutableSetOf<String>()
@@ -248,9 +345,19 @@ private class FakeIngest : HttpTransport {
         extra: Map<String, String>,
     ): String {
         if (method == "GET" && path.startsWith("/logs/fetch-pending")) {
+            pendingLookupCount++
+            if (failPendingRemaining > 0) {
+                failPendingRemaining--
+                throw IllegalStateException("unexpected end of stream")
+            }
             return JSONObject().put("tasks", JSONArray(pendingTasks)).toString()
         }
         if (method == "POST" && path == "/logs/fetch-ack") {
+            ackAttempts++
+            if (failAckRemaining > 0) {
+                failAckRemaining--
+                throw IllegalStateException("unexpected end of stream")
+            }
             val ack = JSONObject(String(body, Charsets.UTF_8))
             val taskId = ack.optString("taskId")
             if (taskId.isBlank()) throw IllegalStateException("HTTP 400 taskId required")

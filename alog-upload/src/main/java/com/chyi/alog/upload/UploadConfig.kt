@@ -8,7 +8,11 @@ data class UploadMeta(
     val buildVer: String,
 )
 
-data class UploadResult(val uploadId: String, val truncated: Boolean)
+data class UploadResult(
+    val uploadId: String,
+    val truncated: Boolean,
+    val fetchTaskId: String? = null,
+)
 
 data class UploadConfig(
     val logDir: java.io.File,

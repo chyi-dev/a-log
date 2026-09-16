@@ -73,7 +73,7 @@ Return：
 
 `taskId` 必填。未知 `taskId` 返回 404。任务已是 `acked` 时重复 ack 返回 200（`idempotent: true`），不改写为失败。
 
-客户端（`:alog-upload`）把所有上传放进唯一 WorkManager 工作 `alog-upload`（`ExistingWorkPolicy.APPEND`）并用 `upload.lock` 串行。`reason=fetch` 时先 `GET /logs/fetch-pending`：没有 pending 则不上报、不 ack；有 pending 才选文件上传，**成功得到 uploadId 后再 ack**。失败不 ack，避免 ack 404 风暴。
+客户端（`:alog-upload`）把所有上传放进唯一 WorkManager 工作 `alog-upload`（`ExistingWorkPolicy.APPEND`）并用 `upload.lock` 串行。`reason=fetch` 时先 `GET /logs/fetch-pending`：没有 pending 则不上报、不 ack；有 pending 才选文件上传，**`complete` 成功后立刻把 `taskId`+`uploadId` 写入 `fetch_ack.json`（phase=`ack`），再 `POST /logs/fetch-ack`**。ack 用独立重试；失败时 Worker 只重做 ack，不再 renegotiate/upload。客户端与 ingest 均 `Connection: close`，避免 complete 后 keep-alive 复用导致 ack `unexpected end of stream`。失败不 ack，避免 ack 404 风暴。
 
 ## 错误码
 

@@ -63,6 +63,50 @@ data class FileFingerprint(
     val sha256: String,
 )
 
+data class FetchAckPending(
+    val taskId: String,
+    val uploadId: String,
+)
+
+/**
+ * After `complete` succeeds, remember taskId+uploadId so a Worker restart
+ * resumes at fetch-ack only (no second negotiate/upload).
+ */
+class FetchAckStore(private val auditDir: File) {
+    fun load(): FetchAckPending? {
+        val file = file()
+        if (!file.isFile) return null
+        return try {
+            val json = JSONObject(file.readText())
+            val taskId = json.optString("taskId")
+            val uploadId = json.optString("uploadId")
+            val phase = json.optString("phase")
+            if (phase != "ack" || taskId.isBlank() || uploadId.isBlank()) null
+            else FetchAckPending(taskId, uploadId)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun saveAckPending(taskId: String, uploadId: String) {
+        if (taskId.isBlank() || uploadId.isBlank()) return
+        auditDir.mkdirs()
+        file().writeText(
+            JSONObject()
+                .put("phase", "ack")
+                .put("taskId", taskId)
+                .put("uploadId", uploadId)
+                .toString(),
+        )
+    }
+
+    fun clear() {
+        file().delete()
+    }
+
+    private fun file() = File(auditDir, "fetch_ack.json")
+}
+
 class UploadAuditLog(private val auditDir: File) {
     fun line(text: String) {
         auditDir.mkdirs()
