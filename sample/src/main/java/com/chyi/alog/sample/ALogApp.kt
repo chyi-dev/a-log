@@ -69,8 +69,12 @@ class ALogApp : Application() {
         val config = LogConfiguration.Builder()
             .logLevel(if (BuildConfig.DEBUG) LogLevel.ALL else LogLevel.INFO)
             .tag("ALog")
-            .enableThreadInfo()
-            .enableBorder()
+            .apply {
+                if (BuildConfig.DEBUG) {
+                    enableThreadInfo()
+                    enableBorder()
+                }
+            }
             .addInterceptor(PrivacyInterceptor())
             .build()
         val printers = ALogPrinters.defaults(

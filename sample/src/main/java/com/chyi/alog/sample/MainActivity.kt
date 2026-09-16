@@ -100,12 +100,13 @@ class MainActivity : AppCompatActivity() {
                 ALog.i("burst $i $payload")
             }
             val writeMs = (System.nanoTime() - start) / 1_000_000
+            val mmapDropped = app.droppedCount()
             choreographer.postFrameCallback { t1 ->
                 times.add(t1)
                 choreographer.postFrameCallback { t2 ->
                     times.add(t2)
                     val stats = FrameJankStats.fromFrameTimes(times)
-                    val msg = "burst10k writeMs=$writeMs ${stats.summary()}"
+                    val msg = "burst10k writeMs=$writeMs mmapDropped=$mmapDropped ${stats.summary()}"
                     Log.i("ALogBurst", msg)
                     ALog.i(msg)
                     binding.txtBurstResult.text = msg

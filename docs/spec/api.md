@@ -77,7 +77,7 @@ fun intercept(item: LogItem): LogItem?
 
 ## 默认值
 
-- mmap 150KB
+- mmap 150KB，异步环形队列 16384 条（可吸收主线程 1 万条 burst；满时才丢弃）
 - 单条 16KB（超出截断并打 INTERNAL 告警）
 - 单文件 8MB，按天 + seq（`DateFileNameGenerator` + `FileSizeBackupStrategy`）
 - `.backupStrategy(NeverBackupStrategy())`：当天不分片，一天一个 `{prefix}_{yyyyMMdd}.alog`（无 seq）

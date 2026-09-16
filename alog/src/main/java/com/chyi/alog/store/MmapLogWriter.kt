@@ -2,6 +2,7 @@ package com.chyi.alog.store
 
 import com.chyi.alog.ALogDefaults
 import com.chyi.alog.LogItem
+import com.chyi.alog.interceptor.Interceptor
 import com.chyi.alog.printer.file.Flattener
 import com.chyi.alog.printer.file.Writer
 import java.io.File
@@ -10,7 +11,6 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -56,7 +56,16 @@ class MmapLogWriter(
         )
     }
     private val mmapFile = File(resolvedCacheDir, "$namePrefix.mm")
-    private val queue = LinkedBlockingQueue<Cmd>(1024)
+    private val queueCap = ALogDefaults.MMAP_QUEUE_CAPACITY
+    private val queueMask = queueCap - 1
+    private val slots = Array(queueCap) { Slot() }
+    private val queueLock = Object()
+    private val scratch = Slot()
+    private var head = 0
+    private var tail = 0
+    private var queued = 0
+    @Volatile private var rawInterceptors: List<Interceptor> = emptyList()
+    @Volatile private var rawFlatten: Flattener? = null
     private val running = AtomicBoolean(true)
     private val dropped = AtomicInteger(0)
     private val worker = Thread({ loop() }, "alog-store").apply { isDaemon = true }
@@ -69,41 +78,112 @@ class MmapLogWriter(
     private var seq = 0
 
     init {
+        require(queueCap > 0 && queueCap and queueMask == 0) { "MMAP_QUEUE_CAPACITY must be a power of two" }
         dir.mkdirs()
         resolvedCacheDir.mkdirs()
         worker.start()
         val opened = CountDownLatch(1)
-        queue.put(Cmd.Init(opened))
+        offer(Slot.INIT, latch = opened, blocking = true)
         opened.await(5, TimeUnit.SECONDS)
     }
 
     override fun append(line: String) {
-        offerAppend(Cmd.Append(line))
+        offer(Slot.LINE, line = line, blocking = false)
     }
 
     fun enqueue(item: LogItem, flatten: Flattener) {
-        offerAppend(Cmd.AppendItem(item, flatten))
+        offer(Slot.ITEM, item = item, flatten = flatten, blocking = false)
     }
 
-    private fun offerAppend(cmd: Cmd) {
-        if (!running.get()) return
-        if (!queue.offer(cmd)) {
-            noteQueueDrop()
+    fun enqueueRaw(
+        level: Int,
+        type: Int,
+        tag: String,
+        msg: String,
+        ts: Long,
+        throwable: Throwable?,
+        interceptors: List<Interceptor>,
+        flatten: Flattener,
+    ): Boolean {
+        if (rawFlatten !== flatten) {
+            rawInterceptors = interceptors
+            rawFlatten = flatten
         }
-    }
-
-    fun acceptMore(): Boolean {
         if (!running.get()) return false
-        if (queue.remainingCapacity() <= 0) {
-            noteQueueDrop()
-            return false
+        synchronized(queueLock) {
+            if (queued >= queueCap) {
+                noteQueueDrop()
+                return false
+            }
+            val slot = slots[head]
+            slot.kind = Slot.RAW
+            slot.level = level
+            slot.type = type
+            slot.tag = tag
+            slot.msg = msg
+            slot.ts = ts
+            slot.throwable = throwable
+            head = (head + 1) and queueMask
+            val wasEmpty = queued == 0
+            queued++
+            if (wasEmpty) queueLock.notify()
+            return true
         }
-        return true
+    }
+
+    private fun offer(
+        kind: Int,
+        blocking: Boolean,
+        line: String? = null,
+        item: LogItem? = null,
+        flatten: Flattener? = null,
+        interceptors: List<Interceptor> = emptyList(),
+        level: Int = 0,
+        type: Int = 0,
+        tag: String = "",
+        msg: String = "",
+        ts: Long = 0L,
+        throwable: Throwable? = null,
+        latch: CountDownLatch? = null,
+    ): Boolean {
+        if (!running.get() && kind != Slot.CLOSE && kind != Slot.ABANDON) return false
+        synchronized(queueLock) {
+            while (queued >= queueCap) {
+                if (!blocking) {
+                    noteQueueDrop()
+                    return false
+                }
+                try {
+                    queueLock.wait(100)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return false
+                }
+            }
+            val slot = slots[head]
+            slot.kind = kind
+            slot.line = line
+            slot.item = item
+            slot.flatten = flatten
+            slot.interceptors = interceptors
+            slot.level = level
+            slot.type = type
+            slot.tag = tag
+            slot.msg = msg
+            slot.ts = ts
+            slot.throwable = throwable
+            slot.latch = latch
+            head = (head + 1) and queueMask
+            val wasEmpty = queued == 0
+            queued++
+            if (wasEmpty) queueLock.notify()
+            return true
+        }
     }
 
     private fun noteQueueDrop() {
         val n = dropped.incrementAndGet()
-        if (n == 1 || n % 1024 == 0) {
+        if (n == 1 || n and (n - 1) == 0) {
             onInternal?.invoke("queue full, dropped=$n")
         }
     }
@@ -120,17 +200,17 @@ class MmapLogWriter(
     override fun flush(sync: Boolean) {
         if (sync) {
             val latch = CountDownLatch(1)
-            queue.put(Cmd.Flush(latch))
+            offer(Slot.FLUSH, latch = latch, blocking = true)
             latch.await(flushWaitSeconds, TimeUnit.SECONDS)
         } else {
-            queue.offer(Cmd.Flush(null))
+            offer(Slot.FLUSH, blocking = false)
         }
     }
 
     override fun close() {
         running.set(false)
         val latch = CountDownLatch(1)
-        queue.offer(Cmd.Close(latch))
+        offer(Slot.CLOSE, latch = latch, blocking = true)
         latch.await(flushWaitSeconds, TimeUnit.SECONDS)
         worker.join(1000)
     }
@@ -159,57 +239,105 @@ class MmapLogWriter(
     fun abandonWithoutSealForTest() {
         running.set(false)
         val latch = CountDownLatch(1)
-        queue.put(Cmd.Abandon(latch))
+        offer(Slot.ABANDON, latch = latch, blocking = true)
         latch.await(flushWaitSeconds, TimeUnit.SECONDS)
         worker.join(1000)
     }
 
     fun awaitQueuedForTest() {
         val latch = CountDownLatch(1)
-        queue.put(Cmd.Barrier(latch))
+        offer(Slot.BARRIER, latch = latch, blocking = true)
         latch.await(flushWaitSeconds, TimeUnit.SECONDS)
+    }
+
+    private fun take(timeoutMs: Long): Slot? {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        synchronized(queueLock) {
+            while (queued == 0) {
+                val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+                if (remaining <= 0L) return null
+                try {
+                    queueLock.wait(remaining)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return null
+                }
+            }
+            val src = slots[tail]
+            scratch.copyFrom(src)
+            src.release()
+            tail = (tail + 1) and queueMask
+            val wasFull = queued >= queueCap
+            queued--
+            if (wasFull) queueLock.notify()
+            return scratch
+        }
     }
 
     private fun loop() {
         while (true) {
-            val cmd = queue.poll(200, TimeUnit.MILLISECONDS)
-            when (cmd) {
-                is Cmd.Init -> {
+            val cmd = take(200) ?: continue
+            when (cmd.kind) {
+                Slot.INIT -> {
                     openBuffer()
                     if (!skippedLock.get()) {
                         recover()
                         files.cleanup()
                     }
-                    cmd.done.countDown()
+                    cmd.latch?.countDown()
                 }
-                is Cmd.Append -> {
-                    if (!skippedLock.get()) writeLine(truncateLine(cmd.line))
+                Slot.LINE -> {
+                    if (!skippedLock.get()) writeLine(truncateLine(cmd.line.orEmpty()))
                 }
-                is Cmd.AppendItem -> {
+                Slot.ITEM -> {
                     if (!skippedLock.get()) {
-                        writeLine(truncateLine(cmd.flatten.flatten(cmd.item)))
+                        val item = cmd.item
+                        val flatten = cmd.flatten
+                        if (item != null && flatten != null) {
+                            writeLine(truncateLine(flatten.flatten(item)))
+                        }
                     }
                 }
-                is Cmd.Flush -> {
-                    if (!skippedLock.get()) seal(forceMapped = true)
-                    cmd.done?.countDown()
+                Slot.RAW -> {
+                    if (!skippedLock.get()) {
+                        writeRaw(cmd)
+                    }
                 }
-                is Cmd.Close -> {
+                Slot.FLUSH -> {
+                    if (!skippedLock.get()) seal(forceMapped = true)
+                    cmd.latch?.countDown()
+                }
+                Slot.CLOSE -> {
                     if (!skippedLock.get()) seal(forceMapped = true)
                     closeBuffer()
-                    cmd.done.countDown()
+                    cmd.latch?.countDown()
                     return
                 }
-                is Cmd.Abandon -> {
+                Slot.ABANDON -> {
                     force()
                     closeBuffer()
-                    cmd.done.countDown()
+                    cmd.latch?.countDown()
                     return
                 }
-                is Cmd.Barrier -> cmd.done.countDown()
-                null -> Unit
+                Slot.BARRIER -> cmd.latch?.countDown()
             }
         }
+    }
+
+    private fun writeRaw(cmd: Slot) {
+        var item = LogItem(
+            level = cmd.level,
+            type = cmd.type,
+            tag = cmd.tag,
+            msg = cmd.msg,
+            ts = cmd.ts,
+            throwable = cmd.throwable,
+        )
+        for (interceptor in rawInterceptors) {
+            item = interceptor.intercept(item) ?: return
+        }
+        val flatten = rawFlatten ?: return
+        writeLine(truncateLine(flatten.flatten(item)))
     }
 
     private fun openBuffer() {
@@ -442,14 +570,57 @@ class MmapLogWriter(
         return v
     }
 
-    private sealed class Cmd {
-        class Init(val done: CountDownLatch) : Cmd()
-        class Append(val line: String) : Cmd()
-        class AppendItem(val item: LogItem, val flatten: Flattener) : Cmd()
-        class Flush(val done: CountDownLatch?) : Cmd()
-        class Close(val done: CountDownLatch) : Cmd()
-        class Abandon(val done: CountDownLatch) : Cmd()
-        class Barrier(val done: CountDownLatch) : Cmd()
+    private class Slot {
+        var kind: Int = 0
+        var line: String? = null
+        var item: LogItem? = null
+        var flatten: Flattener? = null
+        var interceptors: List<Interceptor> = emptyList()
+        var level: Int = 0
+        var type: Int = 0
+        var tag: String = ""
+        var msg: String = ""
+        var ts: Long = 0L
+        var throwable: Throwable? = null
+        var latch: CountDownLatch? = null
+
+        fun copyFrom(other: Slot) {
+            kind = other.kind
+            line = other.line
+            item = other.item
+            flatten = other.flatten
+            interceptors = other.interceptors
+            level = other.level
+            type = other.type
+            tag = other.tag
+            msg = other.msg
+            ts = other.ts
+            throwable = other.throwable
+            latch = other.latch
+        }
+
+        fun release() {
+            kind = 0
+            line = null
+            item = null
+            flatten = null
+            interceptors = emptyList()
+            tag = ""
+            msg = ""
+            throwable = null
+            latch = null
+        }
+
+        companion object {
+            const val INIT = 1
+            const val LINE = 2
+            const val ITEM = 3
+            const val RAW = 4
+            const val FLUSH = 5
+            const val CLOSE = 6
+            const val ABANDON = 7
+            const val BARRIER = 8
+        }
     }
 
     companion object {

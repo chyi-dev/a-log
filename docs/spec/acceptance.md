@@ -61,8 +61,13 @@ adb logcat -d -s ALog:V ALog:*
 
 ### burst 掉帧抽样
 
-- 单元：`FrameJankStatsTest`（时间戳 → jank/dropped）；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`（调用线程 enqueue 应明显快于同步写盘，断言 < 1s）。
-- 设备（必做观感）：`./gradlew :sample:assembleRelease` 后直接 `adb install -r sample/build/outputs/apk/release/sample-release.apk`（Release 已用 debug keystore 签名，不必再签）。点「主线程 1 万条」。界面结果 TextView / toast / `adb logcat -s ALogBurst:I` 打印 `burst10k writeMs=… frames=… jank=… dropped=… maxFrameMs=…`。
-- 模拟器达标带：`writeMs` 宜为数十毫秒或更低（先前 427ms 为失败）；Choreographer `dropped` 接近 0（个位数），`maxFrameMs` 无明显长帧（建议 < 32ms）。`ALogBurst.dropped` 是掉帧数，不是 mmap 队列丢行。
+根因（f62fa64 上 7872 行丢弃）：mmap 异步队列只有 1024 槽，`acceptMore()` 在队列满后直接丢掉后续 `ALog.i`，所以单测 `dropped≈7800`、主线程仍偏慢（LogItem/拦截器/队列节点）。现改为 **16384 预分配环形队列**，Release 仅 FilePrinter 时调用线程只入队 level/tag/msg/ts，拦截器与 JSON flatten 在 `alog-store` 执行；1 万条应全部落盘。
+
+- 单元：`FrameJankStatsTest`；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`；`FilePrinterBurstTest`（`callerMs < 40` **且** `dropped=0` **且** decode 出 10000 条 burst，另校验脱敏仍生效）。
+- 设备：`./gradlew :sample:assembleRelease` 后 `adb install -r sample/build/outputs/apk/release/sample-release.apk`。点「主线程 1 万条」。
+- 模拟器 Release 达标带（`adb logcat -s ALogBurst:I`）：
+  - `writeMs`：宜 < 32（JVM 单测常见约 5–15ms；模拟器可略高但仍应低于两帧）
+  - Choreographer `dropped`：0 或 1
+  - `maxFrameMs`：< 32（与 writeMs 同量级，因为 1 万条在同一帧内入队）
+  - `mmapDropped`：0（1 万条全部入队；`ALogBurst.dropped` 只表示掉帧，不是丢行）
 - Debug 双通道会因 Logcat 同步打印而掉帧，不作为本项达标依据。
-- 单元锁行为：`:alog:testDebugUnitTest --tests com.chyi.alog.printer.file.FilePrinterBurstTest`（主线程 1 万条 enqueue < 40ms，INTERNAL 限频）。

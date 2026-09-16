@@ -19,4 +19,4 @@ adb install -r sample/build/outputs/apk/release/sample-release.apk
 adb logcat -s ALogBurst:I
 ```
 
-模拟器达标带：`writeMs` 宜为数十毫秒或更低（远低于一帧 16ms 的数倍即可），`dropped` 接近 0，`maxFrameMs` 无明显长帧（例如 < 32ms）。Debug 双通道会因 Logcat 同步打印掉帧，不以 Debug 为准。
+模拟器达标带：`writeMs` 宜 < 32ms，Choreographer `dropped` 为 0 或 1，`maxFrameMs` < 32ms。日志中 `mmapDropped` 应为 0（1 万条全部入队）。Debug 双通道会因 Logcat 同步打印掉帧，不以 Debug 为准。

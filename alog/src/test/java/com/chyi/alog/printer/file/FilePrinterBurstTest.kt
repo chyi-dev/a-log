@@ -4,7 +4,9 @@ import com.chyi.alog.ALog
 import com.chyi.alog.LogConfiguration
 import com.chyi.alog.LogLevel
 import com.chyi.alog.interceptor.PrivacyInterceptor
+import com.chyi.alog.store.AlogTestDecode
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -24,7 +26,8 @@ class FilePrinterBurstTest {
     @Test
     fun tenThousandInfoLinesEnqueueWithoutBlockingCaller() {
         val internals = AtomicInteger(0)
-        val printer = FilePrinter.Builder(tmp.newFolder("fp-burst"))
+        val dir = tmp.newFolder("fp-burst")
+        val printer = FilePrinter.Builder(dir)
             .writerMode(WriterMode.MMAP)
             .pid(1)
             .onInternal { internals.incrementAndGet() }
@@ -33,7 +36,6 @@ class FilePrinterBurstTest {
             LogConfiguration.Builder()
                 .logLevel(LogLevel.INFO)
                 .tag("ALog")
-                .enableThreadInfo()
                 .addInterceptor(PrivacyInterceptor())
                 .build(),
             printer,
@@ -44,14 +46,21 @@ class FilePrinterBurstTest {
             ALog.i("burst $i $payload")
         }
         val callerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
+        ALog.i("phone 13812345678 should be masked")
         printer.flush(true)
+        val decoded = AlogTestDecode.linesInDir(dir)
+        val burstLines = decoded.count { it.contains("\"msg\":\"burst ") }
         System.out.println(
-            "filePrinterBurst10k callerMs=$callerMs dropped=${printer.droppedCount()} internals=${internals.get()}",
+            "filePrinterBurst10k callerMs=$callerMs dropped=${printer.droppedCount()} " +
+                "internals=${internals.get()} decoded=${decoded.size} burstLines=$burstLines",
         )
-        assertTrue("Release burst must not flatten/regex/Logcat on caller, callerMs=$callerMs", callerMs < 40)
         assertTrue(
-            "queue-full INTERNAL must be rate-limited, internals=${internals.get()}",
-            internals.get() <= 16,
+            "caller must stay fast while delivering 10k lines, callerMs=$callerMs",
+            callerMs < 40,
         )
+        assertEquals("mmap queue must absorb 10k burst, dropped=${printer.droppedCount()}", 0, printer.droppedCount())
+        assertEquals("all burst lines must be written", 10_000, burstLines)
+        assertTrue(decoded.any { it.contains("138****5678") })
+        assertTrue("INTERNAL should stay quiet on a 10k burst, internals=${internals.get()}", internals.get() <= 2)
     }
 }

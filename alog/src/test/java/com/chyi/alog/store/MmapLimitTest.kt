@@ -187,5 +187,6 @@ class MmapLimitTest {
         writer.flush(true)
         writer.close()
         assertTrue("caller thread should queue asynchronously, callerMs=$callerMs", callerMs < 50)
+        assertEquals("16384-slot ring must absorb 10k appends, dropped=$dropped", 0, dropped)
     }
 }

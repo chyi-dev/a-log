@@ -1,7 +1,8 @@
 package com.chyi.alog
 
-import com.chyi.alog.printer.BackpressuredPrinter
 import com.chyi.alog.printer.Printer
+import com.chyi.alog.printer.PrinterSet
+import com.chyi.alog.printer.file.FilePrinter
 
 /**
  * 带类型 / tag 覆盖的日志写入器。通常由 [ALog.t] 或 [ALog.tag] 得到，也可继续链式调用。
@@ -14,6 +15,10 @@ class Logger internal constructor(
     private val type: Int = LogType.CODE,
     private val tagOverride: String? = null,
 ) {
+    private val mmapFile: FilePrinter? =
+        (printer as? PrinterSet)?.singleMmapFilePrinter()
+            ?: (printer as? FilePrinter)?.takeIf { it.mmapFastPath() }
+
     /** 覆盖业务类型（不是 tag），返回新的 [Logger]。 */
     fun t(type: Int): Logger = Logger(config, printer, type, tagOverride)
 
@@ -64,8 +69,12 @@ class Logger internal constructor(
 
     private fun println(level: Int, tag: String, msg: String, tr: Throwable?) {
         if (level < config.logLevel) return
-        if (printer is BackpressuredPrinter && !printer.acceptMore()) return
         val resolvedTag = tagOverride ?: tag
+        val mmap = mmapFile
+        if (mmap != null) {
+            mmap.enqueueRaw(level, type, resolvedTag, msg, System.currentTimeMillis(), tr)
+            return
+        }
         var item = LogItem(
             level = level,
             type = type,
