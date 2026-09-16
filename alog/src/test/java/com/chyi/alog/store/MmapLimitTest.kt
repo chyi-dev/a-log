@@ -186,6 +186,6 @@ class MmapLimitTest {
         System.out.println("burst10k callerMs=$callerMs dropped=$dropped")
         writer.flush(true)
         writer.close()
-        assertTrue("caller thread should queue asynchronously, callerMs=$callerMs", callerMs < 1_000)
+        assertTrue("caller thread should queue asynchronously, callerMs=$callerMs", callerMs < 50)
     }
 }

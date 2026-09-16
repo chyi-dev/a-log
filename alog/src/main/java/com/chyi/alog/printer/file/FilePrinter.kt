@@ -3,6 +3,7 @@ package com.chyi.alog.printer.file
 import com.chyi.alog.ALogDefaults
 import com.chyi.alog.LogItem
 import com.chyi.alog.LogLevel
+import com.chyi.alog.printer.BackpressuredPrinter
 import com.chyi.alog.printer.Printer
 import com.chyi.alog.store.MmapLogWriter
 import java.io.File
@@ -15,12 +16,22 @@ import java.io.File
 class FilePrinter private constructor(
     private val writer: Writer,
     private val flattener: Flattener,
-) : Printer {
+) : Printer, BackpressuredPrinter {
+
+    override fun acceptMore(): Boolean {
+        val w = writer
+        return if (w is MmapLogWriter) w.acceptMore() else true
+    }
 
     override fun println(item: LogItem) {
-        writer.append(flattener.flatten(item))
+        val w = writer
+        if (w is MmapLogWriter) {
+            w.enqueue(item, flattener)
+        } else {
+            w.append(flattener.flatten(item))
+        }
         if (item.level >= LogLevel.FATAL) {
-            writer.flush(true)
+            w.flush(true)
         }
     }
 

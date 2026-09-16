@@ -26,7 +26,7 @@
 
 ```
 ./gradlew :alog-upload:testDebugUnitTest --tests com.chyi.alog.upload.protocol.LogUploaderProtocolTest
-./gradlew :alog:testDebugUnitTest --tests com.chyi.alog.ALogPrintersTest --tests com.chyi.alog.store.MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread
+./gradlew :alog:testDebugUnitTest --tests com.chyi.alog.ALogPrintersTest --tests com.chyi.alog.printer.file.FilePrinterBurstTest --tests com.chyi.alog.store.MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread
 ./gradlew :sample:testDebugUnitTest --tests com.chyi.alog.sample.FrameJankStatsTest --tests com.chyi.alog.sample.SampleLogPolicyTest
 ./gradlew :sample:testReleaseUnitTest --tests com.chyi.alog.sample.SampleLogPolicyTest
 ```
@@ -49,7 +49,7 @@
 ### Release 无 Logcat
 
 - 单元：`ALogPrintersTest.releaseDoesNotIncludeAndroidPrinter`；`:sample:testReleaseUnitTest` 中 `SampleLogPolicy.consoleOnLaunch()==false`，且 `enableAndroidPrinter(true)==false`（Release 即使点「仅控制台」也不注入）。
-- 设备：`./gradlew :sample:assembleRelease`，安装 Release APK，启动后不要用 Debug 控制台按钮（Release 已禁用）。打「单条日志」/ burst，然后：
+- 设备：`./gradlew :sample:assembleRelease`（已用 debug 签名，可直接 install），安装 Release APK，启动后不要用 Debug 控制台按钮（Release 已禁用）。打「单条日志」/ burst，然后：
 
 ```
 adb logcat -c
@@ -62,4 +62,7 @@ adb logcat -d -s ALog:V ALog:*
 ### burst 掉帧抽样
 
 - 单元：`FrameJankStatsTest`（时间戳 → jank/dropped）；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`（调用线程 enqueue 应明显快于同步写盘，断言 < 1s）。
-- 设备（必做观感）：安装 **Release** sample（无 AndroidPrinter）。点「主线程 1 万条」。界面结果 TextView / toast / `adb logcat -s ALogBurst:I` 打印 `burst10k writeMs=… frames=… jank=… dropped=… maxFrameMs=…`。Release 异步落盘时 `dropped` 应接近 0、`maxFrameMs` 无明显长帧；Debug 双通道会因 Logcat 同步打印而掉帧，不作为本项达标依据。
+- 设备（必做观感）：`./gradlew :sample:assembleRelease` 后直接 `adb install -r sample/build/outputs/apk/release/sample-release.apk`（Release 已用 debug keystore 签名，不必再签）。点「主线程 1 万条」。界面结果 TextView / toast / `adb logcat -s ALogBurst:I` 打印 `burst10k writeMs=… frames=… jank=… dropped=… maxFrameMs=…`。
+- 模拟器达标带：`writeMs` 宜为数十毫秒或更低（先前 427ms 为失败）；Choreographer `dropped` 接近 0（个位数），`maxFrameMs` 无明显长帧（建议 < 32ms）。`ALogBurst.dropped` 是掉帧数，不是 mmap 队列丢行。
+- Debug 双通道会因 Logcat 同步打印而掉帧，不作为本项达标依据。
+- 单元锁行为：`:alog:testDebugUnitTest --tests com.chyi.alog.printer.file.FilePrinterBurstTest`（主线程 1 万条 enqueue < 40ms，INTERNAL 限频）。

@@ -22,3 +22,8 @@ fun interface Printer {
     /** [com.chyi.alog.ALog.init] 时注入配置，可用于控制台装饰等。 */
     fun attach(config: LogConfiguration) {}
 }
+
+/** mmap 等有界队列：满时调用方应跳过分配。 */
+interface BackpressuredPrinter {
+    fun acceptMore(): Boolean
+}

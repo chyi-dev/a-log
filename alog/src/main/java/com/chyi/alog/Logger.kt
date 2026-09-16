@@ -1,5 +1,6 @@
 package com.chyi.alog
 
+import com.chyi.alog.printer.BackpressuredPrinter
 import com.chyi.alog.printer.Printer
 
 /**
@@ -63,6 +64,7 @@ class Logger internal constructor(
 
     private fun println(level: Int, tag: String, msg: String, tr: Throwable?) {
         if (level < config.logLevel) return
+        if (printer is BackpressuredPrinter && !printer.acceptMore()) return
         val resolvedTag = tagOverride ?: tag
         var item = LogItem(
             level = level,

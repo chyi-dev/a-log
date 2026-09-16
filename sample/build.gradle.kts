@@ -18,6 +18,8 @@ android {
 
     buildTypes {
         release {
+            // Demo/QA: sign Release with the debug keystore so assembleRelease is installable.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

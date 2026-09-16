@@ -1,6 +1,8 @@
 package com.chyi.alog.store
 
 import com.chyi.alog.ALogDefaults
+import com.chyi.alog.LogItem
+import com.chyi.alog.printer.file.Flattener
 import com.chyi.alog.printer.file.Writer
 import java.io.File
 import java.nio.ByteBuffer
@@ -76,16 +78,42 @@ class MmapLogWriter(
     }
 
     override fun append(line: String) {
+        offerAppend(Cmd.Append(line))
+    }
+
+    fun enqueue(item: LogItem, flatten: Flattener) {
+        offerAppend(Cmd.AppendItem(item, flatten))
+    }
+
+    private fun offerAppend(cmd: Cmd) {
         if (!running.get()) return
-        val payload = if (line.length > ALogDefaults.MAX_LINE_BYTES) {
+        if (!queue.offer(cmd)) {
+            noteQueueDrop()
+        }
+    }
+
+    fun acceptMore(): Boolean {
+        if (!running.get()) return false
+        if (queue.remainingCapacity() <= 0) {
+            noteQueueDrop()
+            return false
+        }
+        return true
+    }
+
+    private fun noteQueueDrop() {
+        val n = dropped.incrementAndGet()
+        if (n == 1 || n % 1024 == 0) {
+            onInternal?.invoke("queue full, dropped=$n")
+        }
+    }
+
+    private fun truncateLine(line: String): String {
+        return if (line.length > ALogDefaults.MAX_LINE_BYTES) {
             onInternal?.invoke("line truncated to ${ALogDefaults.MAX_LINE_BYTES}")
             line.substring(0, ALogDefaults.MAX_LINE_BYTES)
         } else {
             line
-        }
-        if (!queue.offer(Cmd.Append(payload))) {
-            dropped.incrementAndGet()
-            onInternal?.invoke("queue full, dropped=${dropped.get()}")
         }
     }
 
@@ -155,7 +183,12 @@ class MmapLogWriter(
                     cmd.done.countDown()
                 }
                 is Cmd.Append -> {
-                    if (!skippedLock.get()) writeLine(cmd.line)
+                    if (!skippedLock.get()) writeLine(truncateLine(cmd.line))
+                }
+                is Cmd.AppendItem -> {
+                    if (!skippedLock.get()) {
+                        writeLine(truncateLine(cmd.flatten.flatten(cmd.item)))
+                    }
                 }
                 is Cmd.Flush -> {
                     if (!skippedLock.get()) seal(forceMapped = true)
@@ -412,6 +445,7 @@ class MmapLogWriter(
     private sealed class Cmd {
         class Init(val done: CountDownLatch) : Cmd()
         class Append(val line: String) : Cmd()
+        class AppendItem(val item: LogItem, val flatten: Flattener) : Cmd()
         class Flush(val done: CountDownLatch?) : Cmd()
         class Close(val done: CountDownLatch) : Cmd()
         class Abandon(val done: CountDownLatch) : Cmd()
