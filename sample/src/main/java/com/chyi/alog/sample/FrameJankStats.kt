@@ -4,7 +4,7 @@ import java.util.Locale
 
 /**
  * Choreographer 时间戳抽样：把相邻 vsync 间隔换算成 jank / 掉帧。
- * 供主线程 1 万条 burst 验收打印，也可单测。
+ * 供 sample「主线程 1 万条」burst 验收打印，也可单测。
  */
 data class FrameJankStats(
     val frameCount: Int,

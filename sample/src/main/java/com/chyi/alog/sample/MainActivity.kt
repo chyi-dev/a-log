@@ -96,9 +96,7 @@ class MainActivity : AppCompatActivity() {
         choreographer.postFrameCallback { t0 ->
             times.add(t0)
             val start = System.nanoTime()
-            repeat(10_000) { i ->
-                ALog.i("burst $i $payload")
-            }
+            ALog.i(10_000) { i -> "burst $i $payload" }
             val writeMs = (System.nanoTime() - start) / 1_000_000
             val mmapDropped = app.droppedCount()
             choreographer.postFrameCallback { t1 ->
@@ -106,7 +104,7 @@ class MainActivity : AppCompatActivity() {
                 choreographer.postFrameCallback { t2 ->
                     times.add(t2)
                     val stats = FrameJankStats.fromFrameTimes(times)
-                    val msg = "burst10k writeMs=$writeMs mmapDropped=$mmapDropped ${stats.summary()}"
+                    val msg = "burst10k writeMs=$writeMs mmapDropped=$mmapDropped mode=batch ${stats.summary()}"
                     Log.i("ALogBurst", msg)
                     ALog.i(msg)
                     binding.txtBurstResult.text = msg

@@ -3,7 +3,7 @@
     <string name="sample_title">ALog sample</string>
     <string name="btn_single">单条日志</string>
     <string name="btn_burst">主线程 1 万条</string>
-    <string name="burst_result_placeholder">掉帧抽样：点「主线程 1 万条」后显示 writeMs / jank / dropped</string>
+    <string name="burst_result_placeholder">掉帧抽样：点「主线程 1 万条」后显示 writeMs（一次 batch 提交）/ jank / dropped</string>
     <string name="burst_sampling">burst sampling…</string>
     <string name="btn_flush">flush(sync)</string>
     <string name="btn_console_only">仅控制台</string>

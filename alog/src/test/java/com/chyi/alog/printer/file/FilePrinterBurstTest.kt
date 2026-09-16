@@ -63,4 +63,41 @@ class FilePrinterBurstTest {
         assertTrue(decoded.any { it.contains("138****5678") })
         assertTrue("INTERNAL should stay quiet on a 10k burst, internals=${internals.get()}", internals.get() <= 2)
     }
+
+    @Test
+    fun tenThousandInfoLinesViaBatchApiReturnsImmediately() {
+        val internals = AtomicInteger(0)
+        val dir = tmp.newFolder("fp-batch")
+        val printer = FilePrinter.Builder(dir)
+            .writerMode(WriterMode.MMAP)
+            .pid(1)
+            .onInternal { internals.incrementAndGet() }
+            .build()
+        ALog.init(
+            LogConfiguration.Builder()
+                .logLevel(LogLevel.INFO)
+                .tag("ALog")
+                .addInterceptor(PrivacyInterceptor())
+                .build(),
+            printer,
+        )
+        val payload = "x".repeat(200)
+        val start = System.nanoTime()
+        ALog.i(10_000) { i -> "burst $i $payload" }
+        val callerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
+        printer.flush(true)
+        val decoded = AlogTestDecode.linesInDir(dir)
+        val burstLines = decoded.count { it.contains("\"msg\":\"burst ") }
+        System.out.println(
+            "filePrinterBatch10k callerMs=$callerMs dropped=${printer.droppedCount()} " +
+                "internals=${internals.get()} decoded=${decoded.size} burstLines=$burstLines",
+        )
+        assertTrue(
+            "batch submit must return immediately, callerMs=$callerMs",
+            callerMs < 40,
+        )
+        assertEquals("batch uses one queue slot, dropped=${printer.droppedCount()}", 0, printer.droppedCount())
+        assertEquals("all burst lines must be written", 10_000, burstLines)
+        assertTrue("INTERNAL should stay quiet on a 10k batch, internals=${internals.get()}", internals.get() <= 2)
+    }
 }

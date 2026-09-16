@@ -3,6 +3,8 @@ package com.chyi.alog
 import com.chyi.alog.printer.Printer
 import com.chyi.alog.printer.PrinterSet
 import com.chyi.alog.printer.file.FilePrinter
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 
 /**
  * 带类型 / tag 覆盖的日志写入器。通常由 [ALog.t] 或 [ALog.tag] 得到，也可继续链式调用。
@@ -45,6 +47,12 @@ class Logger internal constructor(
     fun i(tag: String, msg: String) = println(LogLevel.INFO, tag, msg, null)
     /** INFO：默认 tag，附带异常。 */
     fun i(msg: String, tr: Throwable) = println(LogLevel.INFO, config.tag, msg, tr)
+
+    /**
+     * 一次提交 [count] 条 INFO。调用线程只入队一条任务即返回；[msgAt] 在 mmap 的 `alog-store`
+     * （或非 mmap 时的后台线程）执行。主线程 burst 请用此方法，不要 `repeat { i(msg) }`。
+     */
+    fun i(count: Int, msgAt: (Int) -> String) = printlnBatch(LogLevel.INFO, config.tag, count, msgAt)
 
     /** WARN：使用配置中的默认 tag。 */
     fun w(msg: String) = println(LogLevel.WARN, config.tag, msg, null)
@@ -91,5 +99,28 @@ class Logger internal constructor(
             item = interceptor.intercept(item) ?: return
         }
         printer.println(item)
+    }
+
+    private fun printlnBatch(level: Int, tag: String, count: Int, msgAt: (Int) -> String) {
+        if (level < config.logLevel || count <= 0) return
+        val resolvedTag = tagOverride ?: tag
+        val mmap = mmapFile
+        if (mmap != null) {
+            mmap.enqueueBatch(level, type, resolvedTag, count, msgAt)
+            return
+        }
+        fallbackBatch.execute {
+            var i = 0
+            while (i < count) {
+                println(level, resolvedTag, msgAt(i), null)
+                i++
+            }
+        }
+    }
+
+    private companion object {
+        private val fallbackBatch: Executor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "alog-batch").apply { isDaemon = true }
+        }
     }
 }

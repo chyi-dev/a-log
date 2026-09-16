@@ -15,6 +15,7 @@ import java.io.File
  * ALog.v/d/i/w/e/f(msg)
  * ALog.v/d/i/w/e/f(tag, msg)
  * ALog.v/d/i/w/e/f(msg, throwable)
+ * ALog.i(count) { i -> "burst $i …" }
  * ALog.t(LogType.NETWORK).e(tag, msg)
  * ALog.tag("Http").d("ok")
  * ```
@@ -90,6 +91,16 @@ object ALog {
     /** INFO：默认 tag，附带异常。 */
     @JvmStatic
     fun i(msg: String, tr: Throwable) { assertInit(); logger.i(msg, tr) }
+
+    /**
+     * 一次提交 [count] 条 INFO。调用线程只入队 **一条** batch 任务并立即返回；
+     * 每条文案由 [msgAt] 在 `alog-store`（mmap）或后台线程生成。
+     *
+     * 设备主线程 burst 请用此 API。单条 `repeat { ALog.i(msg) }` 的非阻塞路径由
+     * `FilePrinterBurstTest` 覆盖，不要在 UI 线程空转 1 万次来测掉帧。
+     */
+    @JvmStatic
+    fun i(count: Int, msgAt: (Int) -> String) { assertInit(); logger.i(count, msgAt) }
 
     /** WARN：使用配置中的默认 tag。 */
     @JvmStatic

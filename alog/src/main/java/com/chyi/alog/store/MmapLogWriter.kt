@@ -131,6 +131,41 @@ class MmapLogWriter(
         }
     }
 
+    fun enqueueBatch(
+        level: Int,
+        type: Int,
+        tag: String,
+        count: Int,
+        msgAt: (Int) -> String,
+        interceptors: List<Interceptor>,
+        flatten: Flattener,
+    ): Boolean {
+        if (count <= 0) return true
+        if (rawFlatten !== flatten) {
+            rawInterceptors = interceptors
+            rawFlatten = flatten
+        }
+        if (!running.get()) return false
+        synchronized(queueLock) {
+            if (queued >= queueCap) {
+                noteQueueDrop()
+                return false
+            }
+            val slot = slots[head]
+            slot.kind = Slot.BATCH
+            slot.level = level
+            slot.type = type
+            slot.tag = tag
+            slot.batchCount = count
+            slot.batchMsg = msgAt
+            head = (head + 1) and queueMask
+            val wasEmpty = queued == 0
+            queued++
+            if (wasEmpty) queueLock.notify()
+            return true
+        }
+    }
+
     private fun offer(
         kind: Int,
         blocking: Boolean,
@@ -303,6 +338,11 @@ class MmapLogWriter(
                         writeRaw(cmd)
                     }
                 }
+                Slot.BATCH -> {
+                    if (!skippedLock.get()) {
+                        writeBatch(cmd)
+                    }
+                }
                 Slot.FLUSH -> {
                     if (!skippedLock.get()) seal(forceMapped = true)
                     cmd.latch?.countDown()
@@ -338,6 +378,42 @@ class MmapLogWriter(
         }
         val flatten = rawFlatten ?: return
         writeLine(truncateLine(flatten.flatten(item)))
+    }
+
+    private fun writeBatch(cmd: Slot) {
+        val msgAt = cmd.batchMsg ?: return
+        val flatten = rawFlatten ?: return
+        val n = cmd.batchCount
+        var i = 0
+        while (i < n) {
+            val msg = try {
+                msgAt(i)
+            } catch (t: Throwable) {
+                onInternal?.invoke("batch msgAt failed at $i: ${t.message}")
+                i++
+                continue
+            }
+            var item = LogItem(
+                level = cmd.level,
+                type = cmd.type,
+                tag = cmd.tag,
+                msg = msg,
+                ts = System.currentTimeMillis(),
+            )
+            var keep = true
+            for (interceptor in rawInterceptors) {
+                val next = interceptor.intercept(item)
+                if (next == null) {
+                    keep = false
+                    break
+                }
+                item = next
+            }
+            if (keep) {
+                writeLine(truncateLine(flatten.flatten(item)))
+            }
+            i++
+        }
     }
 
     private fun openBuffer() {
@@ -583,6 +659,8 @@ class MmapLogWriter(
         var ts: Long = 0L
         var throwable: Throwable? = null
         var latch: CountDownLatch? = null
+        var batchCount: Int = 0
+        var batchMsg: ((Int) -> String)? = null
 
         fun copyFrom(other: Slot) {
             kind = other.kind
@@ -597,6 +675,8 @@ class MmapLogWriter(
             ts = other.ts
             throwable = other.throwable
             latch = other.latch
+            batchCount = other.batchCount
+            batchMsg = other.batchMsg
         }
 
         fun release() {
@@ -609,6 +689,8 @@ class MmapLogWriter(
             msg = ""
             throwable = null
             latch = null
+            batchCount = 0
+            batchMsg = null
         }
 
         companion object {
@@ -620,6 +702,7 @@ class MmapLogWriter(
             const val CLOSE = 6
             const val ABANDON = 7
             const val BARRIER = 8
+            const val BATCH = 9
         }
     }
 

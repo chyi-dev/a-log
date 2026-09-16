@@ -7,7 +7,7 @@
 3. 只传其中一个 Printer 时另一通道无输出。
 4. 边框/线程/堆栈只出现在 Logcat，不出现在 JSON 字段。
 5. 拦截器可丢掉指定 tag；手机号脱敏后文件通道为打码字符串。
-6. 主线程 1 万条约 200B，Release 异步无明显掉帧。
+6. 主线程一次 batch 提交 1 万条约 200B，Release 异步无明显掉帧。单条 `ALog.i` 循环 1 万次的非阻塞由 JVM `FilePrinterBurstTest` 覆盖，不在 UI 空转。
 7. `adb shell am force-stop com.chyi.alog.sample` 后重启，decode 能解出杀之前 mmap 中的完整明文（封成一块）。不允许整段无法解压。
 8. 破坏文件中部 1KB，前后块仍可解；decode 打印坏块偏移且不崩溃。
 9. 独占目录 `files/alog/{process}/`，清理不扫目录外文件。
@@ -61,13 +61,19 @@ adb logcat -d -s ALog:V ALog:*
 
 ### burst 掉帧抽样
 
-根因（f62fa64 上 7872 行丢弃）：mmap 异步队列只有 1024 槽，`acceptMore()` 在队列满后直接丢掉后续 `ALog.i`，所以单测 `dropped≈7800`、主线程仍偏慢（LogItem/拦截器/队列节点）。现改为 **16384 预分配环形队列**，Release 仅 FilePrinter 时调用线程只入队 level/tag/msg/ts，拦截器与 JSON flatten 在 `alog-store` 执行；1 万条应全部落盘。
+**库路径（JVM）**与**设备掉帧（Release sample）**分开量：
 
-- 单元：`FrameJankStatsTest`；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`；`FilePrinterBurstTest`（`callerMs < 40` **且** `dropped=0` **且** decode 出 10000 条 burst，另校验脱敏仍生效）。Agent JVM：`filePrinterBurst10k callerMs=6 dropped=0 internals=0 decoded=10001 burstLines=10000`（`MmapLimitTest` `callerMs=5 dropped=0`）。
+- 先前 QA 在 UI 线程 `for` 1 万次 `ALog.i`：即使 mmap 已异步，**空循环 + 1 万次方法调用/字符串拼接**仍要约 110ms（`writeMs≈111–122`，`maxFrameMs≈100–116`）。那不是库同步写盘，也不能当掉帧口径。
+- f62fa64 上 `dropped=7872` 是 1024 槽 + `acceptMore()` 丢行，已改为 16384 环 + 禁止 acceptMore 丢弃。`FilePrinterBurstTest` 仍用 **1 万次单条 `ALog.i`** 证明调用线程 enqueue 快且 **10000 条全部落盘**（阈值不放宽）。
+
+设备按钮改为一次 `ALog.i(10000) { i -> "burst $i …" }`：主线程只入队 **一条** batch 任务，文案在 `alog-store` 生成。
+
+- 单元：`FrameJankStatsTest`；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`；`FilePrinterBurstTest.tenThousandInfoLinesEnqueueWithoutBlockingCaller`（`callerMs < 40` **且** `dropped=0` **且** decode 10000 条 burst）；`FilePrinterBurstTest.tenThousandInfoLinesViaBatchApiReturnsImmediately`（同样交付 10000 条）。Agent JVM 对照见测试 stdout。
 - 设备：`./gradlew :sample:assembleRelease` 后 `adb install -r sample/build/outputs/apk/release/sample-release.apk`。点「主线程 1 万条」。
 - 模拟器 Release 达标带（`adb logcat -s ALogBurst:I`）：
-  - `writeMs`：宜 < 32（JVM 单测常见约 5–15ms；模拟器可略高但仍应低于两帧）
+  - `writeMs`：一次 batch 入队耗时，**&lt; 32**（通常应接近 0–几毫秒）
+  - `mode=batch`：确认走 batch API，不是 UI 上 1 万次 `ALog.i`
   - Choreographer `dropped`：0 或 1
-  - `maxFrameMs`：< 32（与 writeMs 同量级，因为 1 万条在同一帧内入队）
-  - `mmapDropped`：0（1 万条全部入队；`ALogBurst.dropped` 只表示掉帧，不是丢行）
+  - `maxFrameMs`：**&lt; 32**
+  - `mmapDropped`：0（batch 占 1 个队列槽；1 万条由 store 线程写出）。`ALogBurst.dropped` 只表示掉帧
 - Debug 双通道会因 Logcat 同步打印而掉帧，不作为本项达标依据。

@@ -50,6 +50,33 @@ class FilePrinter private constructor(
         )
     }
 
+    /**
+     * 一次入队 [count] 条。调用线程只提交一条 batch 任务；文案由 [msgAt] 在 alog-store 生成。
+     */
+    fun enqueueBatch(
+        level: Int,
+        type: Int,
+        tag: String,
+        count: Int,
+        msgAt: (Int) -> String,
+    ) {
+        val w = writer
+        if (w is MmapLogWriter) {
+            w.enqueueBatch(level, type, tag, count, msgAt, interceptors, flattener)
+            if (level >= LogLevel.FATAL) {
+                w.flush(true)
+            }
+            return
+        }
+        var i = 0
+        while (i < count) {
+            println(
+                LogItem(level = level, type = type, tag = tag, msg = msgAt(i), ts = System.currentTimeMillis()),
+            )
+            i++
+        }
+    }
+
     override fun println(item: LogItem) {
         val w = writer
         if (w is MmapLogWriter) {

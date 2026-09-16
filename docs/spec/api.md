@@ -39,6 +39,7 @@ ALog.init(config: LogConfiguration, vararg printers: Printer)
 ALog.v/d/i/w/e/f(msg)
 ALog.v/d/i/w/e/f(tag, msg)
 ALog.v/d/i/w/e/f(msg, throwable)
+ALog.i(count) { i -> "burst $i payload" }
 ALog.t(LogType.NETWORK).e(tag, msg)
 ALog.tag("Http").d("ok")
 ALog.flush(sync = true)
@@ -46,6 +47,8 @@ ALog.prepareForUpload(logRoot, cacheRoot, livePids)
 ```
 
 `t(type)` 设置业务类型，不是 tag。
+
+`ALog.i(count, msgAt)`：一次入队一条 batch 任务，调用线程立即返回；`count` 条文案在 mmap `alog-store`（或非 mmap 后台线程）生成。设备主线程 burst 用此 API。单条循环的非阻塞由 `FilePrinterBurstTest` 覆盖。
 
 `prepareForUpload`：当前进程 `flush(sync)`、回收已死进程的 mmap，然后返回 `logRoot` 及一级子目录下的 `*.alog`。上传模块在读文件前调用；未 `init` 时不抛错。
 
