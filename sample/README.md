@@ -1,5 +1,16 @@
 # ALog sample
 
+## ingest URL
+
+默认 `http://10.0.2.2:8080`（Android 模拟器访问宿主机）。真机请改 `ALogApp.enqueueUpload` 里的 `baseUrl` 为电脑 IP，并保证与 ingest 同网。Token：`alog-dev`。unionId：`demo-user`。
+
+## 上传 / 回捞
+
+1. 宿主机：`cd server/alog-ingest && python3 server.py 8080`，浏览器打开 http://127.0.0.1:8080/ 。
+2. Sample 点「单条日志」或「主线程 1 万条」，再点「上传日志」（`reason=manual`）。
+3. 控制台「加载上传任务」，点「解密显示」看明文；「下载 txt / 源文件」验证导出。
+4. 回捞：控制台创建 pending 任务 → sample 点「模拟回捞」→ 控制台刷新，status=`acked` 且带 uploadId。
+
 ## Release APK（QA）
 
 Release 使用 **debug keystore** 签名，便于本机/模拟器直接安装：

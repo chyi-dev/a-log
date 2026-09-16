@@ -123,7 +123,8 @@ class ALogApp : Application() {
             UploadConfig(
                 logDir = logDir,
                 cacheDir = alogCacheDir,
-                baseUrl = "http://192.168.1.70:8080",
+                // Emulator → host. Physical device: use the ingest machine LAN IP.
+                baseUrl = "http://10.0.2.2:8080",
                 token = "alog-dev",
                 meta = UploadMeta(
                     appId = packageName,

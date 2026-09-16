@@ -77,3 +77,53 @@ adb logcat -d -s ALog:V ALog:*
   - `maxFrameMs`：**&lt; 32**
   - `mmapDropped`：0（batch 占 1 个队列槽；1 万条由 store 线程写出）。`ALogBurst.dropped` 只表示掉帧
 - Debug 双通道会因 Logcat 同步打印而掉帧，不作为本项达标依据。
+
+## P1 查询控制台 / 回捞（M4）
+
+自动化（无需设备）：
+
+```
+python3 -m unittest test_server.py
+# cwd: server/alog-ingest
+
+./gradlew :alog-upload:testDebugUnitTest --tests com.chyi.alog.upload.protocol.LogUploaderProtocolTest --tests com.chyi.alog.upload.protocol.LogUploaderTest --tests com.chyi.alog.upload.protocol.AlogFileCollectorTest
+```
+
+### 启动控制台
+
+```
+cd server/alog-ingest
+python3 server.py 8080
+# 打开 http://127.0.0.1:8080/  token 为 alog-dev
+```
+
+Sample 默认 ingest：`http://10.0.2.2:8080`（模拟器访问宿主机）。真机改为电脑局域网 IP。
+
+### 多条件检索
+
+- 控制台「上传任务」：unionId、deviceId、fromDate、toDate、type 与任务分页。
+- 同一 unionId 两天文件应能按 fromDate=toDate 分开列出（文件名中的 `yyyyMMdd`，含 `alog_push_yyyyMMdd_*.alog`）。
+- 「日志详情」：type / tag / 关键字 / 日期；只选 `network` 时看不到 `code` 行。`type=2` 与 `type=network` 等价。
+- 无匹配：任务表「暂无上传任务」；详情「暂无数据」。ingest 未启动：红色错误条，不白屏。
+
+### 任务列表与详情稳定
+
+- 任务按时间新到旧；坏 JSON 任务文件被跳过，不 500。
+- 连续点不同任务：后一次详情覆盖前一次，不会把旧结果写回来。
+- 详情分页（上一页/下一页/每页条数）与 `total` 一致；非法 page/size 不 500。
+
+### 导出
+
+- 任务行或详情工具条：「下载 txt」→ `GET /logs/tasks/{id}/export.txt`（当前 type/tag/q/日期过滤生效）。
+- 「下载源文件」→ `GET .../export.source`（单文件 `.alog`，多文件 zip）。
+- 未选任务时导出按钮禁用。
+
+### 回捞闭环
+
+1. 控制台填 unionId=`demo-user`（与 sample 一致），可选日期窗，点「创建回捞任务」，status=`pending`。
+2. Sample 点「模拟回捞」（需已有 `.alog` 且网络可达 ingest）。
+3. 控制台「刷新列表」：status=`acked`，`ackedAt` 有值，`uploadId` 可点进详情。
+4. 无 pending 时点「模拟回捞」：客户端不上报、不 ack 占位 id。
+5. `POST /logs/fetch-ack` 无 taskId → 400；未知 taskId → 404。
+
+设备上才能做的：sample 实际上传与 WorkManager 回捞。Agent 已覆盖 ingest API、文件日期、pending→ack 协议。

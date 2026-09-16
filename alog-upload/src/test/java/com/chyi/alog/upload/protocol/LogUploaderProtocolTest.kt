@@ -105,6 +105,47 @@ class LogUploaderProtocolTest {
         assertTrue(second.uploadId != first.uploadId)
     }
 
+    @Test
+    fun negotiateSendsDateFromPushFileName() {
+        val ingest = FakeIngest()
+        val file = alogFile("alog_push_20260916_0.alog", 800)
+        uploader(ingest).upload(listOf(file), "manual")
+        assertEquals("20260916", ingest.lastFileDate)
+    }
+
+    @Test
+    fun fetchUploadsThenAcksPendingTaskWithUploadId() {
+        val ingest = FakeIngest()
+        ingest.pendingTasks.add(
+            JSONObject()
+                .put("taskId", "ft-real")
+                .put("fromMs", 1)
+                .put("toMs", 2)
+                .put("maxBytes", 4096),
+        )
+        val file = alogFile("alog_20990101_0.alog", 800)
+        val client = uploader(ingest)
+        val pending = client.pendingFetchTask("u", "d")
+        assertEquals("ft-real", pending!!.taskId)
+        assertEquals(1L, pending.fromMs)
+        assertEquals(2L, pending.toMs)
+        assertEquals(4096L, pending.maxBytes)
+        val result = client.upload(listOf(file), "fetch", byteLimit = pending.maxBytes)
+        client.ackFetch(pending.taskId, result.uploadId, ok = true)
+        assertEquals("ft-real", ingest.lastAckTaskId)
+        assertEquals(result.uploadId, ingest.lastAckUploadId)
+        assertTrue(ingest.lastAckOk)
+        assertEquals(0, ingest.pendingTasks.size)
+    }
+
+    @Test
+    fun fetchDoesNotAckWhenNoPendingTask() {
+        val ingest = FakeIngest()
+        val client = uploader(ingest)
+        assertEquals(null, client.pendingFetchTask("u", "d"))
+        assertEquals(null, ingest.lastAckTaskId)
+    }
+
     private fun uploader(ingest: FakeIngest): LogUploader = LogUploader(
         baseUrl = "http://ingest.test",
         token = "alog-dev",
@@ -141,6 +182,11 @@ private class FakeIngest : HttpTransport {
     var lastCompleteStatus = ""
     var lastSkip = false
     var putAttempts = 0
+    var lastFileDate = ""
+    var lastAckTaskId: String? = null
+    var lastAckUploadId: String? = null
+    var lastAckOk = false
+    val pendingTasks = mutableListOf<JSONObject>()
     val putSuccesses = mutableListOf<PutCall>()
     private val chunks = mutableMapOf<String, MutableMap<Int, ByteArray>>()
     private val tasks = mutableMapOf<String, JSONObject>()
@@ -153,6 +199,21 @@ private class FakeIngest : HttpTransport {
         contentType: String,
         extra: Map<String, String>,
     ): String {
+        if (method == "GET" && path.startsWith("/logs/fetch-pending")) {
+            return JSONObject().put("tasks", JSONArray(pendingTasks)).toString()
+        }
+        if (method == "POST" && path == "/logs/fetch-ack") {
+            val ack = JSONObject(String(body, Charsets.UTF_8))
+            val taskId = ack.optString("taskId")
+            if (taskId.isBlank()) throw IllegalStateException("HTTP 400 taskId required")
+            val idx = pendingTasks.indexOfFirst { it.optString("taskId") == taskId }
+            if (idx < 0) throw IllegalStateException("HTTP 404 unknown taskId")
+            pendingTasks.removeAt(idx)
+            lastAckTaskId = taskId
+            lastAckUploadId = ack.optString("uploadId").takeIf { it.isNotBlank() }
+            lastAckOk = ack.optBoolean("ok", true)
+            return JSONObject().put("ok", true).put("taskId", taskId).put("status", "acked").toString()
+        }
         if (method == "POST" && path == "/logs/uploads") {
             return negotiate(JSONObject(String(body, Charsets.UTF_8)))
         }
@@ -180,6 +241,7 @@ private class FakeIngest : HttpTransport {
             val skip = digest in hashIndex
             anySkip = anySkip || skip
             val fileId = if (skip) hashIndex.getValue(digest) else "f-$negotiateCount-$i"
+            lastFileDate = item.optString("date")
             filesOut.put(
                 JSONObject()
                     .put("fileId", fileId)

@@ -30,6 +30,18 @@ internal fun interface HttpTransport {
     ): String
 }
 
+data class FetchTask(
+    val taskId: String,
+    val fromMs: Long? = null,
+    val toMs: Long? = null,
+    val maxBytes: Long? = null,
+)
+
+private fun JSONObject.nullableLong(key: String): Long? {
+    if (!has(key) || isNull(key)) return null
+    return optLong(key)
+}
+
 class LogUploader(
     private val baseUrl: String,
     private val token: String,
@@ -68,15 +80,22 @@ class LogUploader(
         this.sleeper = sleeper
     }
 
-    fun upload(files: List<File>, reason: String): UploadResult {
+    fun upload(
+        files: List<File>,
+        reason: String,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+        byteLimit: Long? = null,
+    ): UploadResult {
         audit.line("start reason=$reason files=${files.joinToString { it.name }}")
-        val selected = AlogFileCollector.select(files, maxBytes, recentDays)
+        val limit = byteLimit ?: maxBytes
+        val selected = AlogFileCollector.select(files, limit, recentDays, fromMs = fromMs, toMs = toMs)
         if (selected.isEmpty()) {
             audit.line("skip empty upload reason=$reason")
             sessionStore.clear()
             return UploadResult("", false)
         }
-        val truncated = AlogFileCollector.truncated(files, selected, recentDays)
+        val truncated = AlogFileCollector.truncated(files, selected, recentDays, fromMs = fromMs, toMs = toMs)
         val fingerprints = selected.map {
             FileFingerprint(it.name, it.absolutePath, it.length(), sha256(it))
         }
@@ -105,14 +124,24 @@ class LogUploader(
         }
     }
 
-    fun pendingFetchTaskId(unionId: String, deviceId: String): String? {
+    fun pendingFetchTask(unionId: String, deviceId: String): FetchTask? {
         val qs = "unionId=${enc(unionId)}&deviceId=${enc(deviceId)}"
         val json = JSONObject(http("GET", "/logs/fetch-pending?$qs", ByteArray(0), "application/json"))
         val tasks = json.optJSONArray("tasks") ?: return null
         if (tasks.length() == 0) return null
-        val id = tasks.getJSONObject(0).optString("taskId")
-        return id.takeIf { it.isNotBlank() }
+        val obj = tasks.getJSONObject(0)
+        val id = obj.optString("taskId")
+        if (id.isBlank()) return null
+        return FetchTask(
+            taskId = id,
+            fromMs = obj.nullableLong("fromMs"),
+            toMs = obj.nullableLong("toMs"),
+            maxBytes = obj.nullableLong("maxBytes")?.takeIf { it > 0 },
+        )
     }
+
+    fun pendingFetchTaskId(unionId: String, deviceId: String): String? =
+        pendingFetchTask(unionId, deviceId)?.taskId
 
     private fun resumeOrNegotiate(
         selected: List<File>,
@@ -145,7 +174,7 @@ class LogUploader(
                     .put("path", fp.path)
                     .put("size", fp.size)
                     .put("sha256", fp.sha256)
-                    .put("date", file.name.substringAfter('_').substringBefore('_')),
+                    .put("date", AlogFileCollector.dateStampOf(file.name).orEmpty()),
             )
         }
         val body = JSONObject()
@@ -207,9 +236,14 @@ class LogUploader(
         }
     }
 
-    fun ackFetch(taskId: String) {
-        val body = JSONObject().put("taskId", taskId).put("ok", true).toString()
-        http("POST", "/logs/fetch-ack", body.toByteArray(), "application/json")
+    fun ackFetch(taskId: String, uploadId: String? = null, ok: Boolean = true) {
+        val body = JSONObject()
+            .put("taskId", taskId)
+            .put("ok", ok)
+        if (!uploadId.isNullOrBlank()) {
+            body.put("uploadId", uploadId)
+        }
+        http("POST", "/logs/fetch-ack", body.toString().toByteArray(), "application/json")
     }
 
     private fun withRetries(label: String, block: () -> Unit) {

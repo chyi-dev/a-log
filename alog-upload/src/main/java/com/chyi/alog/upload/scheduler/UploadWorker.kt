@@ -16,6 +16,7 @@ import com.chyi.alog.ALogDefaults
 import com.chyi.alog.upload.UploadDefaults
 import com.chyi.alog.upload.UploadMeta
 import com.chyi.alog.upload.protocol.LogUploader
+import com.chyi.alog.upload.protocol.FetchTask
 import java.io.File
 
 class UploadWorker(
@@ -58,23 +59,38 @@ class UploadWorker(
             recentDays = recentDays,
         )
         return try {
-            uploader.upload(files, reason)
             if (reason == "fetch") {
                 val pending = try {
-                    uploader.pendingFetchTaskId(
+                    uploader.pendingFetchTask(
                         inputData.getString(KEY_UNION) ?: "anonymous",
                         inputData.getString(KEY_DEVICE) ?: "unknown",
                     )
                 } catch (_: Throwable) {
                     null
+                } ?: inputData.getString(KEY_FETCH_TASK)?.takeIf { it.isNotBlank() }?.let {
+                    FetchTask(taskId = it)
                 }
-                uploader.ackFetch(
-                    pending
-                        ?: inputData.getString(KEY_FETCH_TASK)
-                        ?: "sample-fetch",
-                )
+                if (pending == null) {
+                    Result.success()
+                } else {
+                    val result = uploader.upload(
+                        files,
+                        reason,
+                        fromMs = pending.fromMs,
+                        toMs = pending.toMs,
+                        byteLimit = pending.maxBytes,
+                    )
+                    uploader.ackFetch(
+                        pending.taskId,
+                        uploadId = result.uploadId.takeIf { it.isNotEmpty() },
+                        ok = true,
+                    )
+                    Result.success()
+                }
+            } else {
+                uploader.upload(files, reason)
+                Result.success()
             }
-            Result.success()
         } catch (_: Throwable) {
             Result.retry()
         }

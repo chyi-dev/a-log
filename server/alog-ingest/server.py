@@ -151,6 +151,7 @@ class Handler(BaseHTTPRequestHandler):
             "status": "negotiating",
             "meta": body,
             "files": [],
+            "createdAt": int(time.time() * 1000),
         }
         files_out = []
         for item in files_in:
@@ -167,13 +168,15 @@ class Handler(BaseHTTPRequestHandler):
                     skip = True
                     hit = index[digest]
                     file_id = hit["fileId"] if isinstance(hit, dict) else hit
+            name = item.get("name")
             files_out.append({
                 "fileId": file_id,
-                "name": item.get("name"),
+                "name": name,
                 "path": item.get("path"),
                 "sha256": digest,
                 "skip": skip,
                 "size": item.get("size"),
+                "date": parse_date_param(item.get("date")) or extract_yyyymmdd(name or ""),
             })
         record["files"] = files_out
         self._save_task(record)
@@ -240,6 +243,7 @@ class Handler(BaseHTTPRequestHandler):
         details = sort_detail_rows(details)
         record["status"] = "done"
         record["details"] = details
+        record["logDates"] = sorted(task_log_dates(record))
         self._save_task(record)
         return None
 
@@ -284,29 +288,48 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def _tasks(self, query: dict) -> None:
-        union = (query.get("unionId") or [None])[0]
-        device = (query.get("deviceId") or [None])[0]
+        union = _query_first(query, "unionId")
+        device = _query_first(query, "deviceId")
+        from_date = parse_date_param(_query_first(query, "fromDate"))
+        to_date = parse_date_param(_query_first(query, "toDate"))
+        typ = _query_first(query, "type")
+        page, size = parse_page_size(query, default_size=50, max_size=200)
         tasks = []
         tasks_dir = os.path.join(DATA, "tasks")
         if os.path.isdir(tasks_dir):
             for name in os.listdir(tasks_dir):
-                with open(os.path.join(tasks_dir, name), encoding="utf-8") as f:
-                    task = json.load(f)
+                if not name.endswith(".json"):
+                    continue
+                try:
+                    with open(os.path.join(tasks_dir, name), encoding="utf-8") as f:
+                        task = json.load(f)
+                except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                    continue
                 meta = task.get("meta") or {}
                 if union and meta.get("unionId") != union:
                     continue
                 if device and meta.get("deviceId") != device:
                     continue
-                tasks.append({
-                    "uploadId": task.get("uploadId"),
-                    "status": task.get("status"),
-                    "unionId": meta.get("unionId"),
-                    "deviceId": meta.get("deviceId"),
-                    "reason": meta.get("reason"),
-                    "appVer": meta.get("appVer"),
-                    "files": [x.get("name") for x in task.get("files") or []],
-                })
-        self._send(200, {"tasks": tasks})
+                dates = task_log_dates(task)
+                if from_date or to_date:
+                    in_range = [
+                        d for d in dates
+                        if (not from_date or d >= from_date) and (not to_date or d <= to_date)
+                    ]
+                    if not in_range:
+                        continue
+                if typ and not task_matches_type(task, typ):
+                    continue
+                tasks.append(summarize_task(task, dates))
+        tasks.sort(key=lambda t: (t.get("createdAt") or 0, t.get("uploadId") or ""), reverse=True)
+        total = len(tasks)
+        start = page * size
+        self._send(200, {
+            "tasks": tasks[start:start + size],
+            "total": total,
+            "page": page,
+            "size": size,
+        })
 
     def _details(self, upload_id: str, query: dict) -> None:
         task = self._load_task(upload_id)
@@ -318,8 +341,7 @@ class Handler(BaseHTTPRequestHandler):
         rows = filter_detail_rows(task.get("details") or [], query)
         if (query.get("summary") or [""])[0] in ("1", "true"):
             return self._send(200, summarize_rows(rows, query))
-        page = int((query.get("page") or ["0"])[0])
-        size = int((query.get("size") or ["200"])[0])
+        page, size = parse_page_size(query, default_size=200, max_size=2000)
         start = page * size
         items = rows[start:start + size]
         if _serial_enabled(query):
@@ -329,7 +351,7 @@ class Handler(BaseHTTPRequestHandler):
                 item["serialNotes"] = gs_serial.annotate_notes(to_legacy_line(row))
                 enriched.append(item)
             items = enriched
-        self._send(200, {"total": len(rows), "items": items})
+        self._send(200, {"total": len(rows), "items": items, "page": page, "size": size})
 
     def _details_summary(self, upload_id: str, query: dict) -> None:
         task = self._load_task(upload_id)
@@ -480,17 +502,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def _fetch_ack(self) -> None:
         body = json_body(self)
+        task_id = str(body.get("taskId") or "").strip()
+        if not task_id:
+            return self._send(400, {"error": "taskId required"})
+        task = self._load_fetch(task_id)
+        if not task:
+            return self._send(404, {"error": "unknown taskId"})
         path = os.path.join(DATA, "acks.jsonl")
         with lock:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(body) + "\n")
-        task_id = body.get("taskId")
-        task = self._load_fetch(task_id) if task_id else None
-        if task:
-            task["status"] = "acked" if body.get("ok", True) else "failed"
-            task["ackedAt"] = int(time.time() * 1000)
-            self._save_fetch(task)
-        self._send(200, {"ok": True, "taskId": task_id, "status": (task or {}).get("status")})
+        ok = body.get("ok", True)
+        if isinstance(ok, str):
+            ok = ok.lower() in ("1", "true", "yes")
+        task["status"] = "acked" if ok else "failed"
+        task["ackedAt"] = int(time.time() * 1000)
+        upload_id = str(body.get("uploadId") or "").strip()
+        if upload_id:
+            task["uploadId"] = upload_id
+        self._save_fetch(task)
+        self._send(200, {
+            "ok": True,
+            "taskId": task_id,
+            "status": task.get("status"),
+            "uploadId": task.get("uploadId"),
+            "ackedAt": task.get("ackedAt"),
+        })
 
     def _device_matches(self, task: dict, device: str | None) -> bool:
         if not device:
@@ -509,8 +546,11 @@ class Handler(BaseHTTPRequestHandler):
         path = os.path.join(DATA, "tasks", upload_id + ".json")
         if not os.path.isfile(path):
             return None
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
 
     def _fetch_dir(self) -> str:
         path = os.path.join(DATA, "fetch-tasks")
@@ -523,11 +563,16 @@ class Handler(BaseHTTPRequestHandler):
                 json.dump(record, f)
 
     def _load_fetch(self, task_id: str):
+        if not task_id:
+            return None
         path = os.path.join(self._fetch_dir(), task_id + ".json")
         if not os.path.isfile(path):
             return None
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
 
     def _all_fetch_tasks(self) -> list:
         folder = self._fetch_dir()
@@ -535,8 +580,11 @@ class Handler(BaseHTTPRequestHandler):
         for name in os.listdir(folder):
             if not name.endswith(".json"):
                 continue
-            with open(os.path.join(folder, name), encoding="utf-8") as f:
-                tasks.append(json.load(f))
+            try:
+                with open(os.path.join(folder, name), encoding="utf-8") as f:
+                    tasks.append(json.load(f))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                continue
         tasks.sort(key=lambda t: t.get("createdAt") or 0, reverse=True)
         return tasks
 
@@ -548,6 +596,140 @@ def _query_first(query: dict, key: str, default=None):
 
 def _serial_enabled(query: dict) -> bool:
     return str(_query_first(query, "serial", "") or "").lower() in ("1", "true", "yes")
+
+
+DATE_IN_NAME = re.compile(r"(?<!\d)(\d{8})(?!\d)")
+_TYPE_ALIASES = {
+    "1": "code",
+    "code": "code",
+    "2": "network",
+    "network": "network",
+    "3": "action",
+    "action": "action",
+    "4": "internal",
+    "internal": "internal",
+}
+
+
+def parse_date_param(value) -> str | None:
+    if value in (None, ""):
+        return None
+    digits = re.sub(r"\D", "", str(value))
+    if len(digits) < 8:
+        return None
+    stamp = digits[:8]
+    try:
+        datetime.strptime(stamp, "%Y%m%d")
+    except ValueError:
+        return None
+    return stamp
+
+
+def extract_yyyymmdd(text: str) -> str | None:
+    if not text:
+        return None
+    match = DATE_IN_NAME.search(str(text))
+    return parse_date_param(match.group(1)) if match else None
+
+
+def yyyymmdd_of_ts(ts) -> str | None:
+    try:
+        millis = int(ts)
+    except (TypeError, ValueError):
+        return None
+    if millis <= 0:
+        return None
+    return datetime.fromtimestamp(millis / 1000.0).strftime("%Y%m%d")
+
+
+def task_log_dates(task: dict) -> list:
+    dates = set()
+    cached = task.get("logDates")
+    if isinstance(cached, list):
+        for item in cached:
+            parsed = parse_date_param(item)
+            if parsed:
+                dates.add(parsed)
+    for item in task.get("files") or []:
+        parsed = parse_date_param(item.get("date")) or extract_yyyymmdd(item.get("name") or "")
+        if parsed:
+            dates.add(parsed)
+    for row in task.get("details") or []:
+        parsed = yyyymmdd_of_ts(row.get("ts"))
+        if parsed:
+            dates.add(parsed)
+    if not dates:
+        parsed = yyyymmdd_of_ts(task.get("createdAt"))
+        if parsed:
+            dates.add(parsed)
+    return sorted(dates)
+
+
+def summarize_task(task: dict, dates: list | None = None) -> dict:
+    meta = task.get("meta") or {}
+    dates = list(dates) if dates is not None else task_log_dates(task)
+    files = [x.get("name") for x in task.get("files") or []]
+    return {
+        "uploadId": task.get("uploadId"),
+        "status": task.get("status"),
+        "unionId": meta.get("unionId"),
+        "deviceId": meta.get("deviceId"),
+        "reason": meta.get("reason"),
+        "appVer": meta.get("appVer"),
+        "createdAt": task.get("createdAt"),
+        "logDates": dates,
+        "fromDate": dates[0] if dates else None,
+        "toDate": dates[-1] if dates else None,
+        "files": files,
+        "fileCount": len(files),
+    }
+
+
+def normalize_log_type(value) -> str | None:
+    if value in (None, ""):
+        return None
+    key = str(value).strip().lower()
+    if not key:
+        return None
+    if key in _TYPE_ALIASES:
+        return _TYPE_ALIASES[key]
+    if key.startswith("t") and key[1:].isdigit():
+        return "t" + str(int(key[1:]))
+    if key.isdigit():
+        return "t" + str(int(key))
+    return key
+
+
+def types_match(row_type, wanted) -> bool:
+    want = normalize_log_type(wanted)
+    if not want:
+        return True
+    have = normalize_log_type(row_type)
+    return have == want
+
+
+def task_matches_type(task: dict, typ) -> bool:
+    want = normalize_log_type(typ)
+    if not want:
+        return True
+    details = task.get("details")
+    if not details:
+        return True
+    return any(types_match(row.get("type"), want) for row in details)
+
+
+def parse_page_size(query: dict, default_size: int, max_size: int) -> tuple[int, int]:
+    try:
+        page = int(_query_first(query, "page", "0") or 0)
+    except (TypeError, ValueError):
+        page = 0
+    try:
+        size = int(_query_first(query, "size", str(default_size)) or default_size)
+    except (TypeError, ValueError):
+        size = default_size
+    page = max(0, page)
+    size = min(max(1, size), max_size)
+    return page, size
 
 
 def to_legacy_line(row: dict) -> str:
@@ -572,11 +754,13 @@ def filter_detail_rows(rows: list, query: dict) -> list:
     q = _query_first(query, "q", "") or ""
     from_ts = _query_first(query, "fromTs")
     to_ts = _query_first(query, "toTs")
+    from_date = parse_date_param(_query_first(query, "fromDate"))
+    to_date = parse_date_param(_query_first(query, "toDate"))
     from_ms = int(from_ts) if from_ts not in (None, "") else None
     to_ms = int(to_ts) if to_ts not in (None, "") else None
     out = rows
     if typ:
-        out = [r for r in out if str(r.get("type")) == typ]
+        out = [r for r in out if types_match(r.get("type"), typ)]
     if tag:
         out = [r for r in out if str(r.get("tag")) == tag]
     if q:
@@ -585,6 +769,10 @@ def filter_detail_rows(rows: list, query: dict) -> list:
         out = [r for r in out if int(r.get("ts") or 0) >= from_ms]
     if to_ms is not None:
         out = [r for r in out if int(r.get("ts") or 0) <= to_ms]
+    if from_date:
+        out = [r for r in out if (yyyymmdd_of_ts(r.get("ts")) or "") >= from_date]
+    if to_date:
+        out = [r for r in out if (yyyymmdd_of_ts(r.get("ts")) or "") <= to_date]
     return sort_detail_rows(out)
 
 

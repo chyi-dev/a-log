@@ -68,8 +68,12 @@ Return：
 ## POST /logs/fetch-ack
 
 ```json
-{ "taskId": "...", "ok": true }
+{ "taskId": "...", "ok": true, "uploadId": "u-..." }
 ```
+
+`taskId` 必填，必须是已存在的回捞任务。`ok=true` 将任务标为 `acked`，`ok=false` 标为 `failed`。`uploadId` 可选，写入任务以便控制台跳到对应上传详情。未知 `taskId` 返回 404。
+
+客户端（`:alog-upload` `UploadWorker`）在 `reason=fetch` 时先 `GET /logs/fetch-pending`，再按任务的 `fromMs`/`toMs`/`maxBytes` 选文件上传，成功后带上本次 `uploadId` ack。没有 pending 任务则不上报、不 ack（不再使用占位 `sample-fetch`）。
 
 ## 错误码
 
@@ -80,7 +84,13 @@ Return：
 
 ## 查询（M4）
 
-- `GET /logs/tasks?unionId=&deviceId=&fromDate=&toDate=`
-- `GET /logs/tasks/{taskId}/details?type=&q=&page=&size=`
-- `GET /logs/tasks/{taskId}/export.txt?type=&tag=&q=` — 明文 txt
+- `GET /logs/tasks?unionId=&deviceId=&fromDate=&toDate=&type=&page=&size=`
+  - `fromDate`/`toDate`：`YYYYMMDD` 或 `YYYY-MM-DD`，按任务日志日（文件名中的日期 / 文件 `date` / 明细 ts）过滤
+  - `type`：`code|network|action|internal|t10` 或数字 `1..4`/`10`，只保留含该 type 明细的任务（尚未 decode 的任务仍会列出）
+  - 分页：`page` 从 0，`size` 默认 50、最大 200；返回 `{ tasks, total, page, size }`，按 `createdAt` 新到旧
+- `GET /logs/tasks/{taskId}/details?type=&tag=&q=&fromDate=&toDate=&page=&size=`
+  - `type`/`tag`/`q` 过滤明文行；`type` 同时接受名称与数字
+  - `fromDate`/`toDate` 按行 `ts` 的日历日过滤（仍可用 `fromTs`/`toTs`）
+  - 分页：`page` 从 0，`size` 默认 200、最大 2000
+- `GET /logs/tasks/{taskId}/export.txt?type=&tag=&q=&fromDate=&toDate=` — 明文 txt（过滤与详情一致）
 - `GET /logs/tasks/{taskId}/export.source` — 源 `.alog`（单文件原样；多文件 zip）
