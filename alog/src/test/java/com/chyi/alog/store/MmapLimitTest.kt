@@ -183,8 +183,9 @@ class MmapLimitTest {
         }
         val callerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
         val dropped = writer.droppedCount()
-        writer.close()
         System.out.println("burst10k callerMs=$callerMs dropped=$dropped")
+        writer.flush(true)
+        writer.close()
         assertTrue("caller thread should queue asynchronously, callerMs=$callerMs", callerMs < 1_000)
     }
 }
