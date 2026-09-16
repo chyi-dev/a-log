@@ -68,7 +68,7 @@ adb logcat -d -s ALog:V ALog:*
 
 设备按钮改为一次 `ALog.i(10000) { i -> "burst $i …" }`：主线程只入队 **一条** batch 任务，文案在 `alog-store` 生成。
 
-- 单元：`FrameJankStatsTest`；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`；`FilePrinterBurstTest.tenThousandInfoLinesEnqueueWithoutBlockingCaller`（`callerMs < 40` **且** `dropped=0` **且** decode 10000 条 burst）；`FilePrinterBurstTest.tenThousandInfoLinesViaBatchApiReturnsImmediately`（同样交付 10000 条）。Agent JVM 对照见测试 stdout。
+- 单元：`FrameJankStatsTest`；`MmapLimitTest.tenThousandApprox200BAppendsReturnQuicklyOnCallerThread`；`FilePrinterBurstTest.tenThousandInfoLinesEnqueueWithoutBlockingCaller`（`callerMs < 40` **且** `dropped=0` **且** decode 10000 条 burst）；`FilePrinterBurstTest.tenThousandInfoLinesViaBatchApiReturnsImmediately`（同样交付 10000 条）。Agent JVM：`filePrinterBurst10k callerMs=9 dropped=0 burstLines=10000`；`filePrinterBatch10k callerMs=0 dropped=0 burstLines=10000`。
 - 设备：`./gradlew :sample:assembleRelease` 后 `adb install -r sample/build/outputs/apk/release/sample-release.apk`。点「主线程 1 万条」。
 - 模拟器 Release 达标带（`adb logcat -s ALogBurst:I`）：
   - `writeMs`：一次 batch 入队耗时，**&lt; 32**（通常应接近 0–几毫秒）
