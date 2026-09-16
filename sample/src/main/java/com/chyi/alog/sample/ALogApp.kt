@@ -14,7 +14,7 @@ import com.chyi.alog.LogConfiguration
 import com.chyi.alog.LogLevel
 import com.chyi.alog.ProcessInfo
 import com.chyi.alog.interceptor.PrivacyInterceptor
-import com.chyi.alog.printer.AndroidPrinter
+import com.chyi.alog.printer.ALogPrinters
 import com.chyi.alog.printer.file.FilePrinter
 import com.chyi.alog.upload.ALogUpload
 import com.chyi.alog.upload.UploadConfig
@@ -44,7 +44,7 @@ class ALogApp : Application() {
             .writerMode(com.chyi.alog.printer.file.WriterMode.MMAP)
             .onInternal { Log.w("ALogInternal", it) }
             .build()
-        initLoggers(console = BuildConfig.DEBUG, file = true)
+        initLoggers(console = SampleLogPolicy.consoleOnLaunch(), file = true)
         if (ProcessInfo.processName == packageName) {
             startService(Intent(this, PushProcessService::class.java))
         }
@@ -69,15 +69,18 @@ class ALogApp : Application() {
         val config = LogConfiguration.Builder()
             .logLevel(if (BuildConfig.DEBUG) LogLevel.ALL else LogLevel.INFO)
             .tag("ALog")
-            .enableThreadInfo()
-            .enableBorder()
+            .apply {
+                if (BuildConfig.DEBUG) {
+                    enableThreadInfo()
+                    enableBorder()
+                }
+            }
             .addInterceptor(PrivacyInterceptor())
             .build()
-        val printers = mutableListOf<com.chyi.alog.printer.Printer>()
-        if (console) printers.add(AndroidPrinter(autoSeparate = true))
-        if (file) {
-            printers.add(filePrinter!!)
-        }
+        val printers = ALogPrinters.defaults(
+            debug = SampleLogPolicy.enableAndroidPrinter(console),
+            filePrinter = if (file) filePrinter else null,
+        )
         ALog.init(config, *printers.toTypedArray())
         ALog.i("ALog ready console=$console file=$file process=${ProcessInfo.processName}")
     }

@@ -30,6 +30,15 @@
             android:layout_height="wrap_content"
             android:text="@string/btn_burst" />
 
+        <TextView
+            android:id="@+id/txt_burst_result"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="4dp"
+            android:paddingBottom="8dp"
+            android:text="@string/burst_result_placeholder"
+            android:textSize="13sp" />
+
         <Button
             android:id="@+id/btn_flush"
             android:layout_width="match_parent"

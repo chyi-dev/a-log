@@ -17,8 +17,8 @@ ALog.init(config: LogConfiguration, vararg printers: Printer)
 
 每个 Printer 都会收到同一条（经拦截器处理后的）`LogItem`。不传入的通道不会有输出。
 
-- Debug 默认：`AndroidPrinter` + `FilePrinter`
-- Release 默认：仅 `FilePrinter`
+- Debug 默认：`AndroidPrinter` + `FilePrinter`（`ALogPrinters.defaults(debug = true, filePrinter)` / `ALogDefaults.includeAndroidPrinter(true)`）
+- Release 默认：仅 `FilePrinter`（`includeAndroidPrinter(false)`，不注入 `AndroidPrinter`）
 
 ## LogConfiguration.Builder
 
@@ -39,6 +39,7 @@ ALog.init(config: LogConfiguration, vararg printers: Printer)
 ALog.v/d/i/w/e/f(msg)
 ALog.v/d/i/w/e/f(tag, msg)
 ALog.v/d/i/w/e/f(msg, throwable)
+ALog.i(count) { i -> "burst $i payload" }
 ALog.t(LogType.NETWORK).e(tag, msg)
 ALog.tag("Http").d("ok")
 ALog.flush(sync = true)
@@ -46,6 +47,8 @@ ALog.prepareForUpload(logRoot, cacheRoot, livePids)
 ```
 
 `t(type)` 设置业务类型，不是 tag。
+
+`ALog.i(count, msgAt)`：一次入队一条 batch 任务，调用线程立即返回；`count` 条文案在 mmap `alog-store`（或非 mmap 后台线程）生成。设备主线程 burst 用此 API。单条循环的非阻塞由 `FilePrinterBurstTest` 覆盖。
 
 `prepareForUpload`：当前进程 `flush(sync)`、回收已死进程的 mmap，然后返回 `logRoot` 及一级子目录下的 `*.alog`。上传模块在读文件前调用；未 `init` 时不抛错。
 
@@ -77,7 +80,7 @@ fun intercept(item: LogItem): LogItem?
 
 ## 默认值
 
-- mmap 150KB
+- mmap 150KB，异步环形队列 16384 条（可吸收主线程 1 万条 burst；满时才丢弃）
 - 单条 16KB（超出截断并打 INTERNAL 告警）
 - 单文件 8MB，按天 + seq（`DateFileNameGenerator` + `FileSizeBackupStrategy`）
 - `.backupStrategy(NeverBackupStrategy())`：当天不分片，一天一个 `{prefix}_{yyyyMMdd}.alog`（无 seq）

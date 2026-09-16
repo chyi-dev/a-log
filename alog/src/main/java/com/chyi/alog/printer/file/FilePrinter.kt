@@ -1,8 +1,10 @@
 package com.chyi.alog.printer.file
 
 import com.chyi.alog.ALogDefaults
+import com.chyi.alog.LogConfiguration
 import com.chyi.alog.LogItem
 import com.chyi.alog.LogLevel
+import com.chyi.alog.interceptor.Interceptor
 import com.chyi.alog.printer.Printer
 import com.chyi.alog.store.MmapLogWriter
 import java.io.File
@@ -16,11 +18,74 @@ class FilePrinter private constructor(
     private val writer: Writer,
     private val flattener: Flattener,
 ) : Printer {
+    private var interceptors: List<Interceptor> = emptyList()
+
+    internal fun mmapFastPath(): Boolean = writer is MmapLogWriter
+
+    override fun attach(config: LogConfiguration) {
+        interceptors = config.interceptors
+    }
+
+    /**
+     * Release 热路径：调用线程只入队字段，拦截器与 JSON flatten 在 alog-store 执行。
+     */
+    fun enqueueRaw(
+        level: Int,
+        type: Int,
+        tag: String,
+        msg: String,
+        ts: Long,
+        throwable: Throwable?,
+    ) {
+        val w = writer
+        if (w is MmapLogWriter) {
+            w.enqueueRaw(level, type, tag, msg, ts, throwable, interceptors, flattener)
+            if (level >= LogLevel.FATAL) {
+                w.flush(true)
+            }
+            return
+        }
+        println(
+            LogItem(level = level, type = type, tag = tag, msg = msg, ts = ts, throwable = throwable),
+        )
+    }
+
+    /**
+     * 一次入队 [count] 条。调用线程只提交一条 batch 任务；文案由 [msgAt] 在 alog-store 生成。
+     */
+    fun enqueueBatch(
+        level: Int,
+        type: Int,
+        tag: String,
+        count: Int,
+        msgAt: (Int) -> String,
+    ) {
+        val w = writer
+        if (w is MmapLogWriter) {
+            w.enqueueBatch(level, type, tag, count, msgAt, interceptors, flattener)
+            if (level >= LogLevel.FATAL) {
+                w.flush(true)
+            }
+            return
+        }
+        var i = 0
+        while (i < count) {
+            println(
+                LogItem(level = level, type = type, tag = tag, msg = msgAt(i), ts = System.currentTimeMillis()),
+            )
+            i++
+        }
+    }
 
     override fun println(item: LogItem) {
-        writer.append(flattener.flatten(item))
+        val w = writer
+        if (w is MmapLogWriter) {
+            w.enqueue(item, flattener)
+        } else {
+            w.append(flattener.flatten(item))
+        }
         if (item.level >= LogLevel.FATAL) {
-            writer.flush(true)
+            w.flush(true)
         }
     }
 

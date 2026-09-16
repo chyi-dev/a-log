@@ -24,4 +24,16 @@ object ALogDefaults {
     const val FLUSH_WAIT_SECONDS = 60L
     /** mmap 缓存目录名，相对 `filesDir`。 */
     const val CACHE_DIR_NAME = "alog-cache"
+    /**
+     * mmap 异步队列容量（2 的幂）。单条 enqueue 的 1 万条 burst 可由调用线程入队；
+     * 设备 UI 应使用 `ALog.i(count) { }` 一次提交。满时才丢弃。
+     */
+    const val MMAP_QUEUE_CAPACITY = 16384
+
+    /**
+     * Release 默认不得注入 [com.chyi.alog.printer.AndroidPrinter]（无 ALog Logcat）。
+     * Debug 默认可同时注册 AndroidPrinter 与 FilePrinter。
+     */
+    @JvmStatic
+    fun includeAndroidPrinter(debug: Boolean): Boolean = debug
 }

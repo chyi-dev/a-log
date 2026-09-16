@@ -171,4 +171,22 @@ class MmapLimitTest {
         assertTrue("expected rotation, files=${files.map { it.name + ":" + it.length() }}", files.size >= 2)
         assertEquals(900, decoded + dropped)
     }
+
+    @Test
+    fun tenThousandApprox200BAppendsReturnQuicklyOnCallerThread() {
+        val dir = tmp.newFolder("burst10k")
+        val writer = MmapLogWriter(dir, "alog")
+        val payload = "x".repeat(200)
+        val start = System.nanoTime()
+        repeat(10_000) { i ->
+            writer.append("burst $i $payload")
+        }
+        val callerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
+        val dropped = writer.droppedCount()
+        System.out.println("burst10k callerMs=$callerMs dropped=$dropped")
+        writer.flush(true)
+        writer.close()
+        assertTrue("caller thread should queue asynchronously, callerMs=$callerMs", callerMs < 50)
+        assertEquals("16384-slot ring must absorb 10k appends, dropped=$dropped", 0, dropped)
+    }
 }

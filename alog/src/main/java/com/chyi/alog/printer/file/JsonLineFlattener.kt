@@ -11,17 +11,29 @@ import com.chyi.alog.LogType
 class JsonLineFlattener : Flattener {
     override fun flatten(item: LogItem): String {
         val msg = escape(item.msg)
+        val tag = escape(item.tag)
         return "{" +
             "\"ts\":${item.ts}," +
             "\"level\":\"${LogLevel.nameOf(item.level)}\"," +
             "\"type\":\"${LogType.nameOf(item.type)}\"," +
-            "\"tag\":\"${escape(item.tag)}\"," +
+            "\"tag\":\"$tag\"," +
             "\"msg\":\"$msg\"" +
             "}"
     }
 
     private fun escape(value: String): String {
-        val sb = StringBuilder(value.length)
+        var i = 0
+        while (i < value.length) {
+            when (value[i]) {
+                '\\', '"', '\n', '\r', '\t' -> return escapeSlow(value)
+            }
+            i++
+        }
+        return value
+    }
+
+    private fun escapeSlow(value: String): String {
+        val sb = StringBuilder(value.length + 8)
         for (ch in value) {
             when (ch) {
                 '\\' -> sb.append("\\\\")

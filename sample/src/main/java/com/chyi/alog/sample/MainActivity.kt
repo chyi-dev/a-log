@@ -3,6 +3,8 @@ package com.chyi.alog.sample
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
+import android.view.Choreographer
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.chyi.alog.ALog
@@ -27,6 +29,11 @@ class MainActivity : AppCompatActivity() {
             app.logDir.mkdirs()
         }
 
+        if (!SampleLogPolicy.allowConsoleToggle()) {
+            binding.btnConsoleOnly.isEnabled = false
+            binding.btnBoth.isEnabled = false
+        }
+
         binding.btnSingle.setOnClickListener {
             ALog.d("single debug")
             ALog.t(LogType.NETWORK).i("Http", "GET /ping 200")
@@ -34,11 +41,7 @@ class MainActivity : AppCompatActivity() {
             toast("logged")
         }
         binding.btnBurst.setOnClickListener {
-            val payload = "x".repeat(200)
-            repeat(10_000) { i ->
-                ALog.d("burst $i $payload")
-            }
-            toast("10000 lines queued")
+            runBurstWithFrameSample()
         }
         binding.btnFlush.setOnClickListener {
             ALog.flush(true)
@@ -82,6 +85,32 @@ class MainActivity : AppCompatActivity() {
             val summary = app.describeMultiProcessFiles()
             ALog.i(summary)
             Toast.makeText(this, summary, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun runBurstWithFrameSample() {
+        val choreographer = Choreographer.getInstance()
+        val times = mutableListOf<Long>()
+        val payload = "x".repeat(200)
+        binding.txtBurstResult.text = getString(R.string.burst_sampling)
+        choreographer.postFrameCallback { t0 ->
+            times.add(t0)
+            val start = System.nanoTime()
+            ALog.i(10_000) { i -> "burst $i $payload" }
+            val writeMs = (System.nanoTime() - start) / 1_000_000
+            val mmapDropped = app.droppedCount()
+            choreographer.postFrameCallback { t1 ->
+                times.add(t1)
+                choreographer.postFrameCallback { t2 ->
+                    times.add(t2)
+                    val stats = FrameJankStats.fromFrameTimes(times)
+                    val msg = "burst10k writeMs=$writeMs mmapDropped=$mmapDropped mode=batch ${stats.summary()}"
+                    Log.i("ALogBurst", msg)
+                    ALog.i(msg)
+                    binding.txtBurstResult.text = msg
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
