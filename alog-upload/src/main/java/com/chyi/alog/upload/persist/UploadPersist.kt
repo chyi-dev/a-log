@@ -2,6 +2,7 @@ package com.chyi.alog.upload.persist
 
 import org.json.JSONObject
 import java.io.File
+import java.io.RandomAccessFile
 
 class ChunkStateStore(private val auditDir: File) {
     fun load(uploadId: String, fileId: String): MutableSet<Int> {
@@ -66,5 +67,20 @@ class UploadAuditLog(private val auditDir: File) {
     fun line(text: String) {
         auditDir.mkdirs()
         File(auditDir, "upload_audit.log").appendText("${System.currentTimeMillis()} $text\n")
+    }
+}
+
+/** Serializes uploads that share [auditDir] (session/chunk files) across overlapping workers. */
+class UploadGate(private val auditDir: File) {
+    fun <T> withLock(block: () -> T): T {
+        auditDir.mkdirs()
+        RandomAccessFile(File(auditDir, "upload.lock"), "rw").use { raf ->
+            val lock = raf.channel.lock()
+            try {
+                return block()
+            } finally {
+                lock.release()
+            }
+        }
     }
 }

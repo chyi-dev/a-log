@@ -9,7 +9,9 @@
 1. 宿主机：`cd server/alog-ingest && python3 server.py 8080`，浏览器打开 http://127.0.0.1:8080/ 。
 2. Sample 点「单条日志」或「主线程 1 万条」，再点「上传日志」（`reason=manual`）。
 3. 控制台「加载上传任务」，点「解密显示」看明文；「下载 txt / 源文件」验证导出。
-4. 回捞：控制台创建 pending 任务 → sample 点「模拟回捞」→ 控制台刷新，status=`acked` 且带 uploadId。
+4. 回捞：控制台创建 **一条** pending 任务 → sample **点一次**「模拟回捞」→ 控制台刷新 `acked` + uploadId。
+   无 pending 再点一次：`adb logcat -s ALogUpload:I` 见 `fetch skipped: no pending task`，ingest 无新的 `/logs/uploads` 或 `/logs/fetch-ack`。
+   不要连点「上传日志」和「模拟回捞」；两者共用唯一工作队列 `alog-upload`，会串行。
 
 ## Release APK（QA）
 

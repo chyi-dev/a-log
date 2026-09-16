@@ -71,9 +71,9 @@ Return：
 { "taskId": "...", "ok": true, "uploadId": "u-..." }
 ```
 
-`taskId` 必填，必须是已存在的回捞任务。`ok=true` 将任务标为 `acked`，`ok=false` 标为 `failed`。`uploadId` 可选，写入任务以便控制台跳到对应上传详情。未知 `taskId` 返回 404。
+`taskId` 必填。未知 `taskId` 返回 404。任务已是 `acked` 时重复 ack 返回 200（`idempotent: true`），不改写为失败。
 
-客户端（`:alog-upload` `UploadWorker`）在 `reason=fetch` 时先 `GET /logs/fetch-pending`，再按任务的 `fromMs`/`toMs`/`maxBytes` 选文件上传，成功后带上本次 `uploadId` ack。没有 pending 任务则不上报、不 ack（不再使用占位 `sample-fetch`）。
+客户端（`:alog-upload`）把所有上传放进唯一 WorkManager 工作 `alog-upload`（`ExistingWorkPolicy.APPEND`）并用 `upload.lock` 串行。`reason=fetch` 时先 `GET /logs/fetch-pending`：没有 pending 则不上报、不 ack；有 pending 才选文件上传，**成功得到 uploadId 后再 ack**。失败不 ack，避免 ack 404 风暴。
 
 ## 错误码
 

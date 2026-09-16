@@ -438,6 +438,26 @@ class IngestServerTest(unittest.TestCase):
         status, _, _ = self._raw_get("/logs/tasks/u-missing/export.source")
         self.assertEqual(404, status)
 
+    def test_complete_already_done_is_idempotent(self):
+        upload_id = "u-done-again"
+        assembled = Path(self.data) / "files" / upload_id
+        assembled.mkdir(parents=True)
+        blob = make_unencrypted_alog(['{"ts":1,"level":"INFO","type":"code","tag":"T","msg":"x"}'])
+        (assembled / "a.alog").write_bytes(blob)
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "done",
+            "meta": {},
+            "files": [{"fileId": "f-1", "name": "a.alog", "storedName": "a.alog", "skip": False}],
+            "details": [{"ts": 1, "msg": "x", "type": "code"}],
+        }), encoding="utf-8")
+        code, body = self._json("POST", "/logs/uploads/%s/complete" % upload_id, {})
+        self.assertEqual(200, code)
+        self.assertEqual("done", body["status"])
+        self.assertEqual(1, body["lines"])
+
     def _write_task(self, upload_id, meta, files=None, details=None, status="done", created_at=None):
         tasks = Path(self.data) / "tasks"
         tasks.mkdir(parents=True, exist_ok=True)
@@ -583,6 +603,16 @@ class IngestServerTest(unittest.TestCase):
         code, pending = self._json("GET", "/logs/fetch-pending?unionId=demo-user")
         self.assertEqual(200, code)
         self.assertEqual([], pending["tasks"])
+
+        code, again = self._json("POST", "/logs/fetch-ack", {
+            "taskId": task_id,
+            "ok": True,
+            "uploadId": "u-from-device",
+        })
+        self.assertEqual(200, code)
+        self.assertEqual("acked", again["status"])
+        self.assertTrue(again.get("idempotent"))
+        self.assertEqual("u-from-device", again["uploadId"])
 
     def test_negotiate_stores_file_date_from_push_filename(self):
         code, body = self._json("POST", "/logs/uploads", {

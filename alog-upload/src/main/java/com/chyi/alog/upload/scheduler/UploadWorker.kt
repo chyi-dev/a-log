@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Process
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.ForegroundInfo
 import androidx.work.Worker
@@ -15,8 +16,8 @@ import com.chyi.alog.ALog
 import com.chyi.alog.ALogDefaults
 import com.chyi.alog.upload.UploadDefaults
 import com.chyi.alog.upload.UploadMeta
+import com.chyi.alog.upload.persist.UploadGate
 import com.chyi.alog.upload.protocol.LogUploader
-import com.chyi.alog.upload.protocol.FetchTask
 import java.io.File
 
 class UploadWorker(
@@ -40,17 +41,17 @@ class UploadWorker(
         val recentDays = if (recentDaysRaw < 0) null else recentDaysRaw
         val maxBytes = inputData.getLong(KEY_MAX_BYTES, UploadDefaults.MAX_UPLOAD_BYTES)
         val chunkSize = inputData.getInt(KEY_CHUNK_SIZE, UploadDefaults.CHUNK_SIZE)
-        val am = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val livePids = am.runningAppProcesses?.map { it.pid }?.toSet() ?: emptySet()
-        val files = ALog.prepareForUpload(root, cacheRoot, livePids, Process.myPid())
+        val unionId = inputData.getString(KEY_UNION) ?: "anonymous"
+        val deviceId = inputData.getString(KEY_DEVICE) ?: "unknown"
+        val auditDir = File(applicationContext.filesDir, "alog-audit")
         val uploader = LogUploader(
             baseUrl = baseUrl,
             token = token,
-            auditDir = File(applicationContext.filesDir, "alog-audit"),
+            auditDir = auditDir,
             meta = UploadMeta(
                 appId = inputData.getString(KEY_APP_ID) ?: applicationContext.packageName,
-                unionId = inputData.getString(KEY_UNION) ?: "anonymous",
-                deviceId = inputData.getString(KEY_DEVICE) ?: "unknown",
+                unionId = unionId,
+                deviceId = deviceId,
                 appVer = inputData.getString(KEY_APP_VER) ?: "1.0",
                 buildVer = inputData.getString(KEY_BUILD_VER) ?: "1",
             ),
@@ -58,42 +59,68 @@ class UploadWorker(
             maxBytes = maxBytes,
             recentDays = recentDays,
         )
+        val gate = UploadGate(auditDir)
         return try {
-            if (reason == "fetch") {
-                val pending = try {
-                    uploader.pendingFetchTask(
-                        inputData.getString(KEY_UNION) ?: "anonymous",
-                        inputData.getString(KEY_DEVICE) ?: "unknown",
-                    )
-                } catch (_: Throwable) {
-                    null
-                } ?: inputData.getString(KEY_FETCH_TASK)?.takeIf { it.isNotBlank() }?.let {
-                    FetchTask(taskId = it)
-                }
-                if (pending == null) {
-                    Result.success()
+            gate.withLock {
+                if (reason == "fetch") {
+                    fetchOnce(uploader, root, cacheRoot, unionId, deviceId)
                 } else {
-                    val result = uploader.upload(
-                        files,
-                        reason,
-                        fromMs = pending.fromMs,
-                        toMs = pending.toMs,
-                        byteLimit = pending.maxBytes,
-                    )
-                    uploader.ackFetch(
-                        pending.taskId,
-                        uploadId = result.uploadId.takeIf { it.isNotEmpty() },
-                        ok = true,
-                    )
+                    val files = prepareFiles(root, cacheRoot)
+                    uploader.upload(files, reason)
                     Result.success()
                 }
-            } else {
-                uploader.upload(files, reason)
-                Result.success()
             }
         } catch (_: Throwable) {
             Result.retry()
         }
+    }
+
+    private fun fetchOnce(
+        uploader: LogUploader,
+        root: File,
+        cacheRoot: File,
+        unionId: String,
+        deviceId: String,
+    ): Result {
+        val pending = try {
+            uploader.pendingFetchTask(unionId, deviceId)
+        } catch (t: Throwable) {
+            logFetch("fetch pending lookup failed: ${t.message}")
+            return Result.retry()
+        }
+        if (pending == null) {
+            logFetch("fetch skipped: no pending task")
+            return Result.success()
+        }
+        val files = prepareFiles(root, cacheRoot)
+        val result = uploader.upload(
+            files,
+            "fetch",
+            fromMs = pending.fromMs,
+            toMs = pending.toMs,
+            byteLimit = pending.maxBytes,
+        )
+        if (result.uploadId.isEmpty()) {
+            logFetch("fetch skipped ack: empty upload taskId=${pending.taskId}")
+            return Result.success()
+        }
+        uploader.ackFetch(pending.taskId, result.uploadId, ok = true)
+        logFetch("fetch acked taskId=${pending.taskId} uploadId=${result.uploadId}")
+        return Result.success()
+    }
+
+    private fun logFetch(message: String) {
+        Log.i(LOG_TAG, message)
+        try {
+            ALog.i(message)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun prepareFiles(root: File, cacheRoot: File): List<File> {
+        val am = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val livePids = am.runningAppProcesses?.map { it.pid }?.toSet() ?: emptySet()
+        return ALog.prepareForUpload(root, cacheRoot, livePids, Process.myPid())
     }
 
     private fun foregroundInfo(): ForegroundInfo {
@@ -132,5 +159,6 @@ class UploadWorker(
         const val KEY_RECENT_DAYS = "recentDays"
         const val KEY_MAX_BYTES = "maxBytes"
         const val KEY_CHUNK_SIZE = "chunkSize"
+        private const val LOG_TAG = "ALogUpload"
     }
 }

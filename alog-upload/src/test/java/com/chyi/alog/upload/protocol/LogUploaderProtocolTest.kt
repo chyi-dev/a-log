@@ -119,31 +119,75 @@ class LogUploaderProtocolTest {
         ingest.pendingTasks.add(
             JSONObject()
                 .put("taskId", "ft-real")
-                .put("fromMs", 1)
-                .put("toMs", 2)
                 .put("maxBytes", 4096),
         )
         val file = alogFile("alog_20990101_0.alog", 800)
         val client = uploader(ingest)
-        val pending = client.pendingFetchTask("u", "d")
-        assertEquals("ft-real", pending!!.taskId)
-        assertEquals(1L, pending.fromMs)
-        assertEquals(2L, pending.toMs)
-        assertEquals(4096L, pending.maxBytes)
-        val result = client.upload(listOf(file), "fetch", byteLimit = pending.maxBytes)
-        client.ackFetch(pending.taskId, result.uploadId, ok = true)
+        val result = client.runFetch(listOf(file), "u", "d")
+        assertEquals(ingest.lastUploadId, result!!.uploadId)
         assertEquals("ft-real", ingest.lastAckTaskId)
         assertEquals(result.uploadId, ingest.lastAckUploadId)
         assertTrue(ingest.lastAckOk)
+        assertEquals(1, ingest.ackCount)
+        assertEquals(1, ingest.negotiateCount)
         assertEquals(0, ingest.pendingTasks.size)
     }
 
     @Test
     fun fetchDoesNotAckWhenNoPendingTask() {
         val ingest = FakeIngest()
+        val file = alogFile("alog_20990101_0.alog", 800)
         val client = uploader(ingest)
-        assertEquals(null, client.pendingFetchTask("u", "d"))
+        assertEquals(null, client.runFetch(listOf(file), "u", "d"))
         assertEquals(null, ingest.lastAckTaskId)
+        assertEquals(0, ingest.ackCount)
+        assertEquals(0, ingest.negotiateCount)
+        assertTrue(auditText().contains("skip fetch: no pending task"))
+    }
+
+    @Test
+    fun fetchDoesNotAckWhenUploadFails() {
+        val ingest = FakeIngest()
+        ingest.pendingTasks.add(JSONObject().put("taskId", "ft-fail"))
+        ingest.failCompleteRemaining = 5
+        val file = alogFile("alog_20990101_0.alog", 800)
+        try {
+            uploader(ingest).runFetch(listOf(file), "u", "d")
+            fail("expected complete to fail")
+        } catch (t: IllegalStateException) {
+            assertTrue(t.message.orEmpty().contains("HTTP 503"))
+        }
+        assertEquals(0, ingest.ackCount)
+        assertEquals(null, ingest.lastAckTaskId)
+        assertEquals(1, ingest.pendingTasks.size)
+    }
+
+    @Test
+    fun fetchAckIsIdempotentWhenTaskAlreadyAcked() {
+        val ingest = FakeIngest()
+        ingest.pendingTasks.add(JSONObject().put("taskId", "ft-real"))
+        val file = alogFile("alog_20990101_0.alog", 800)
+        val client = uploader(ingest)
+        val first = client.runFetch(listOf(file), "u", "d")
+        assertEquals(1, ingest.ackCount)
+        client.ackFetch("ft-real", first!!.uploadId, ok = true)
+        assertEquals(2, ingest.ackCount)
+        assertEquals("acked", ingest.lastAckStatus)
+    }
+
+    @Test
+    fun complete409IsNotRetried() {
+        val ingest = FakeIngest()
+        ingest.completeConflict = true
+        val file = alogFile("alog_20990101_0.alog", 800)
+        try {
+            uploader(ingest).upload(listOf(file), "manual")
+            fail("expected 409")
+        } catch (t: IllegalStateException) {
+            assertTrue(t.message.orEmpty().contains("HTTP 409"))
+        }
+        assertEquals(1, ingest.completeCount)
+        assertFalse(auditText().contains("retry complete"))
     }
 
     private fun uploader(ingest: FakeIngest): LogUploader = LogUploader(
@@ -186,7 +230,11 @@ private class FakeIngest : HttpTransport {
     var lastAckTaskId: String? = null
     var lastAckUploadId: String? = null
     var lastAckOk = false
+    var lastAckStatus = ""
+    var ackCount = 0
+    var completeConflict = false
     val pendingTasks = mutableListOf<JSONObject>()
+    private val ackedIds = mutableSetOf<String>()
     val putSuccesses = mutableListOf<PutCall>()
     private val chunks = mutableMapOf<String, MutableMap<Int, ByteArray>>()
     private val tasks = mutableMapOf<String, JSONObject>()
@@ -206,13 +254,23 @@ private class FakeIngest : HttpTransport {
             val ack = JSONObject(String(body, Charsets.UTF_8))
             val taskId = ack.optString("taskId")
             if (taskId.isBlank()) throw IllegalStateException("HTTP 400 taskId required")
+            ackCount++
             val idx = pendingTasks.indexOfFirst { it.optString("taskId") == taskId }
-            if (idx < 0) throw IllegalStateException("HTTP 404 unknown taskId")
-            pendingTasks.removeAt(idx)
+            if (idx < 0 && taskId !in ackedIds) {
+                throw IllegalStateException("HTTP 404 unknown taskId")
+            }
+            if (idx >= 0) pendingTasks.removeAt(idx)
+            ackedIds.add(taskId)
             lastAckTaskId = taskId
             lastAckUploadId = ack.optString("uploadId").takeIf { it.isNotBlank() }
             lastAckOk = ack.optBoolean("ok", true)
-            return JSONObject().put("ok", true).put("taskId", taskId).put("status", "acked").toString()
+            lastAckStatus = "acked"
+            return JSONObject()
+                .put("ok", true)
+                .put("taskId", taskId)
+                .put("status", "acked")
+                .put("idempotent", idx < 0)
+                .toString()
         }
         if (method == "POST" && path == "/logs/uploads") {
             return negotiate(JSONObject(String(body, Charsets.UTF_8)))
@@ -294,8 +352,11 @@ private class FakeIngest : HttpTransport {
             failCompleteRemaining--
             throw IllegalStateException("HTTP 503 complete")
         }
-        val record = tasks[uploadId] ?: throw IllegalStateException("HTTP 404 unknown uploadId")
         completeCount++
+        if (completeConflict) {
+            throw IllegalStateException("HTTP 409 file sha256 mismatch")
+        }
+        val record = tasks[uploadId] ?: throw IllegalStateException("HTTP 404 unknown uploadId")
         if (record.optString("status") == "done") {
             lastCompleteStatus = "done"
             return JSONObject().put("status", "done").put("uploadId", uploadId).toString()

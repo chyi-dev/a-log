@@ -24,7 +24,7 @@ DATA = os.path.join(ROOT, "data")
 CONSOLE = os.path.join(os.path.dirname(ROOT), "alog-console")
 TOKEN = "alog-dev"
 CHUNK_SIZE = 2 * 1024 * 1024
-lock = threading.Lock()
+lock = threading.RLock()
 
 os.makedirs(DATA, exist_ok=True)
 
@@ -186,10 +186,19 @@ class Handler(BaseHTTPRequestHandler):
         record = self._load_task(upload_id)
         if not record:
             return self._send(404, {"error": "unknown uploadId"})
-        err = self._assemble_and_decode(record)
-        if err:
-            return self._send(err[0], err[1])
-        self._send(200, {"status": "done", "uploadId": upload_id, "lines": len(record.get("details") or [])})
+        with lock:
+            record = self._load_task(upload_id) or record
+            if record.get("status") == "done":
+                return self._send(200, {
+                    "status": "done",
+                    "uploadId": upload_id,
+                    "lines": len(record.get("details") or []),
+                })
+            err = self._assemble_and_decode(record)
+            if err:
+                return self._send(err[0], err[1])
+            record = self._load_task(upload_id) or record
+            self._send(200, {"status": "done", "uploadId": upload_id, "lines": len(record.get("details") or [])})
 
     def _decode_task(self, upload_id: str) -> None:
         record = self._load_task(upload_id)
@@ -201,7 +210,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"status": record.get("status"), "uploadId": upload_id, "lines": len(record.get("details") or [])})
 
     def _assemble_and_decode(self, record: dict, force: bool = False):
-        if record.get("status") == "done" and record.get("details") and not force:
+        if record.get("status") == "done" and not force:
             return None
         upload_id = record["uploadId"]
         items = record.get("files") or []
@@ -505,29 +514,41 @@ class Handler(BaseHTTPRequestHandler):
         task_id = str(body.get("taskId") or "").strip()
         if not task_id:
             return self._send(400, {"error": "taskId required"})
-        task = self._load_fetch(task_id)
-        if not task:
-            return self._send(404, {"error": "unknown taskId"})
-        path = os.path.join(DATA, "acks.jsonl")
         with lock:
+            task = self._load_fetch(task_id)
+            if not task:
+                return self._send(404, {"error": "unknown taskId"})
+            path = os.path.join(DATA, "acks.jsonl")
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(body) + "\n")
-        ok = body.get("ok", True)
-        if isinstance(ok, str):
-            ok = ok.lower() in ("1", "true", "yes")
-        task["status"] = "acked" if ok else "failed"
-        task["ackedAt"] = int(time.time() * 1000)
-        upload_id = str(body.get("uploadId") or "").strip()
-        if upload_id:
-            task["uploadId"] = upload_id
-        self._save_fetch(task)
-        self._send(200, {
-            "ok": True,
-            "taskId": task_id,
-            "status": task.get("status"),
-            "uploadId": task.get("uploadId"),
-            "ackedAt": task.get("ackedAt"),
-        })
+            ok = body.get("ok", True)
+            if isinstance(ok, str):
+                ok = ok.lower() in ("1", "true", "yes")
+            upload_id = str(body.get("uploadId") or "").strip()
+            if task.get("status") == "acked":
+                if upload_id and not task.get("uploadId"):
+                    task["uploadId"] = upload_id
+                    self._save_fetch(task)
+                return self._send(200, {
+                    "ok": True,
+                    "taskId": task_id,
+                    "status": "acked",
+                    "uploadId": task.get("uploadId"),
+                    "ackedAt": task.get("ackedAt"),
+                    "idempotent": True,
+                })
+            task["status"] = "acked" if ok else "failed"
+            task["ackedAt"] = int(time.time() * 1000)
+            if upload_id:
+                task["uploadId"] = upload_id
+            self._save_fetch(task)
+            self._send(200, {
+                "ok": True,
+                "taskId": task_id,
+                "status": task.get("status"),
+                "uploadId": task.get("uploadId"),
+                "ackedAt": task.get("ackedAt"),
+            })
 
     def _device_matches(self, task: dict, device: str | None) -> bool:
         if not device:

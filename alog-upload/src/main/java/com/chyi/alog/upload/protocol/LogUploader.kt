@@ -124,6 +124,37 @@ class LogUploader(
         }
     }
 
+    /**
+     * Fetch loop: look up a real pending task, upload only if one exists, ack only after
+     * a successful (non-empty) upload. Never acks placeholder ids.
+     */
+    fun runFetch(files: List<File>, unionId: String, deviceId: String): UploadResult? {
+        val pending = pendingFetchTask(unionId, deviceId)
+        if (pending == null) {
+            audit.line("skip fetch: no pending task")
+            return null
+        }
+        audit.line("fetch pending taskId=${pending.taskId}")
+        try {
+            val result = upload(
+                files,
+                "fetch",
+                fromMs = pending.fromMs,
+                toMs = pending.toMs,
+                byteLimit = pending.maxBytes,
+            )
+            if (result.uploadId.isEmpty()) {
+                audit.line("skip fetch ack: empty upload taskId=${pending.taskId}")
+                return result
+            }
+            ackFetch(pending.taskId, result.uploadId, ok = true)
+            return result
+        } catch (t: Throwable) {
+            audit.line("fetch upload failed taskId=${pending.taskId} ${t.message}")
+            throw t
+        }
+    }
+
     fun pendingFetchTask(unionId: String, deviceId: String): FetchTask? {
         val qs = "unionId=${enc(unionId)}&deviceId=${enc(deviceId)}"
         val json = JSONObject(http("GET", "/logs/fetch-pending?$qs", ByteArray(0), "application/json"))
@@ -243,7 +274,16 @@ class LogUploader(
         if (!uploadId.isNullOrBlank()) {
             body.put("uploadId", uploadId)
         }
-        http("POST", "/logs/fetch-ack", body.toString().toByteArray(), "application/json")
+        try {
+            http("POST", "/logs/fetch-ack", body.toString().toByteArray(), "application/json")
+            audit.line("fetch acked taskId=$taskId uploadId=${uploadId.orEmpty()}")
+        } catch (t: Throwable) {
+            if (ok && isNonRetriable(t)) {
+                audit.line("fetch ack already applied taskId=$taskId ${t.message}")
+                return
+            }
+            throw t
+        }
     }
 
     private fun withRetries(label: String, block: () -> Unit) {
@@ -254,6 +294,7 @@ class LogUploader(
                 block()
                 return
             } catch (t: Throwable) {
+                if (isNonRetriable(t)) throw t
                 attempt++
                 audit.line("retry $label attempt=$attempt ${t.message}")
                 if (attempt >= UploadDefaults.UPLOAD_RETRIES) throw t
@@ -261,6 +302,11 @@ class LogUploader(
                 delay *= 2
             }
         }
+    }
+
+    private fun isNonRetriable(t: Throwable): Boolean {
+        val message = t.message.orEmpty()
+        return "HTTP 400" in message || "HTTP 401" in message || "HTTP 404" in message || "HTTP 409" in message
     }
 
     private fun http(
