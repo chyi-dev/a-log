@@ -438,6 +438,240 @@ class IngestServerTest(unittest.TestCase):
         status, _, _ = self._raw_get("/logs/tasks/u-missing/export.source")
         self.assertEqual(404, status)
 
+    def test_complete_already_done_is_idempotent(self):
+        upload_id = "u-done-again"
+        assembled = Path(self.data) / "files" / upload_id
+        assembled.mkdir(parents=True)
+        blob = make_unencrypted_alog(['{"ts":1,"level":"INFO","type":"code","tag":"T","msg":"x"}'])
+        (assembled / "a.alog").write_bytes(blob)
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        (tasks / (upload_id + ".json")).write_text(json.dumps({
+            "uploadId": upload_id,
+            "status": "done",
+            "meta": {},
+            "files": [{"fileId": "f-1", "name": "a.alog", "storedName": "a.alog", "skip": False}],
+            "details": [{"ts": 1, "msg": "x", "type": "code"}],
+        }), encoding="utf-8")
+        code, body = self._json("POST", "/logs/uploads/%s/complete" % upload_id, {})
+        self.assertEqual(200, code)
+        self.assertEqual("done", body["status"])
+        self.assertEqual(1, body["lines"])
+
+    def _write_task(self, upload_id, meta, files=None, details=None, status="done", created_at=None):
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True, exist_ok=True)
+        record = {
+            "uploadId": upload_id,
+            "status": status,
+            "meta": meta,
+            "files": files or [],
+            "details": details or [],
+        }
+        if created_at is not None:
+            record["createdAt"] = created_at
+        (tasks / (upload_id + ".json")).write_text(json.dumps(record), encoding="utf-8")
+
+    def test_tasks_filter_by_user_device_date_and_type(self):
+        self._write_task("u-a", {"unionId": "user-1", "deviceId": "dev-1", "reason": "manual"}, files=[
+            {"fileId": "f-1", "name": "alog_20260915_0.alog", "date": "20260915"},
+        ], details=[
+            {"type": "code", "tag": "A", "msg": "day15-code"},
+        ], created_at=100)
+        self._write_task("u-b", {"unionId": "user-1", "deviceId": "dev-1", "reason": "manual"}, files=[
+            {"fileId": "f-2", "name": "alog_push_20260916_0.alog"},
+        ], details=[
+            {"type": "network", "tag": "Http", "msg": "day16-net"},
+        ], created_at=200)
+        self._write_task("u-c", {"unionId": "user-2", "deviceId": "dev-9", "reason": "fetch"}, files=[
+            {"fileId": "f-3", "name": "alog_20260916.alog", "date": "20260916"},
+        ], created_at=300)
+
+        code, all_user = self._json("GET", "/logs/tasks?unionId=user-1&deviceId=dev-1")
+        self.assertEqual(200, code)
+        self.assertEqual(2, all_user["total"])
+        self.assertEqual(["u-b", "u-a"], [t["uploadId"] for t in all_user["tasks"]])
+        self.assertEqual("dev-1", all_user["tasks"][0]["deviceId"])
+
+        code, day16 = self._json("GET", "/logs/tasks?unionId=user-1&fromDate=20260916&toDate=2026-09-16")
+        self.assertEqual(200, code)
+        self.assertEqual(["u-b"], [t["uploadId"] for t in day16["tasks"]])
+
+        code, typed = self._json("GET", "/logs/tasks?unionId=user-1&type=network")
+        self.assertEqual(200, code)
+        self.assertEqual(["u-b"], [t["uploadId"] for t in typed["tasks"]])
+
+        code, page0 = self._json("GET", "/logs/tasks?unionId=user-1&page=0&size=1")
+        self.assertEqual(200, code)
+        self.assertEqual(2, page0["total"])
+        self.assertEqual(1, len(page0["tasks"]))
+        self.assertEqual("u-b", page0["tasks"][0]["uploadId"])
+        code, page1 = self._json("GET", "/logs/tasks?unionId=user-1&page=1&size=1")
+        self.assertEqual(["u-a"], [t["uploadId"] for t in page1["tasks"]])
+
+        code, empty = self._json("GET", "/logs/tasks?unionId=nobody")
+        self.assertEqual(200, code)
+        self.assertEqual(0, empty["total"])
+        self.assertEqual([], empty["tasks"])
+
+    def test_tasks_skips_corrupt_json_and_clamps_page(self):
+        tasks = Path(self.data) / "tasks"
+        tasks.mkdir(parents=True)
+        (tasks / "u-ok.json").write_text(json.dumps({
+            "uploadId": "u-ok",
+            "status": "done",
+            "meta": {"unionId": "demo-user"},
+            "files": [{"name": "alog_20260916_0.alog"}],
+            "createdAt": 1,
+        }), encoding="utf-8")
+        (tasks / "u-bad.json").write_text("{not-json", encoding="utf-8")
+        (tasks / "readme.txt").write_text("ignore", encoding="utf-8")
+
+        code, data = self._json("GET", "/logs/tasks?page=-3&size=9999")
+        self.assertEqual(200, code)
+        self.assertEqual(1, data["total"])
+        self.assertEqual("u-ok", data["tasks"][0]["uploadId"])
+        self.assertEqual(0, data["page"])
+        self.assertEqual(200, data["size"])
+
+        code, _details = self._json("GET", "/logs/tasks/u-bad/details")
+        self.assertEqual(404, code)
+
+    def test_details_type_aliases_and_from_date(self):
+        upload_id = "u-type-alias"
+        self._write_task(upload_id, {}, details=[
+            {"ts": 1757952000000, "type": 2, "tag": "Http", "msg": "numeric-net"},
+            {"ts": 1758038400000, "type": "code", "tag": "A", "msg": "named-code"},
+            {"ts": 1758124800000, "type": "t10", "tag": "Biz", "msg": "biz"},
+        ])
+        code, net = self._json("GET", "/logs/tasks/%s/details?type=network" % upload_id)
+        self.assertEqual(200, code)
+        self.assertEqual(["numeric-net"], [r["msg"] for r in net["items"]])
+        code, net2 = self._json("GET", "/logs/tasks/%s/details?type=2" % upload_id)
+        self.assertEqual(["numeric-net"], [r["msg"] for r in net2["items"]])
+        code, biz = self._json("GET", "/logs/tasks/%s/details?type=10" % upload_id)
+        self.assertEqual(["biz"], [r["msg"] for r in biz["items"]])
+        day = server.yyyymmdd_of_ts(1758038400000)
+        code, dated = self._json("GET", "/logs/tasks/%s/details?fromDate=%s&toDate=%s" % (upload_id, day, day))
+        self.assertEqual(200, code)
+        self.assertEqual(["named-code"], [r["msg"] for r in dated["items"]])
+        self.assertEqual(0, dated["page"])
+        self.assertEqual(200, dated["size"])
+
+        status, _, body = self._raw_get("/logs/tasks/%s/export.txt?type=2" % upload_id)
+        self.assertEqual(200, status)
+        text = body.decode("utf-8")
+        self.assertIn("Http:numeric-net", text)
+        self.assertNotIn("named-code", text)
+
+    def test_details_invalid_page_does_not_500(self):
+        self._write_task("u-page-bad", {}, details=[{"msg": "x", "type": "code", "ts": 1}])
+        code, data = self._json("GET", "/logs/tasks/u-page-bad/details?page=nope&size=oops")
+        self.assertEqual(200, code)
+        self.assertEqual(1, data["total"])
+        self.assertEqual(["x"], [r["msg"] for r in data["items"]])
+
+    def test_fetch_ack_requires_known_task_and_records_upload(self):
+        code, created = self._json("POST", "/logs/fetch-tasks", {"unionId": "demo-user"})
+        self.assertEqual(200, code)
+        task_id = created["taskId"]
+
+        code, missing = self._json("POST", "/logs/fetch-ack", {"ok": True})
+        self.assertEqual(400, code)
+        self.assertEqual("taskId required", missing["error"])
+
+        code, unknown = self._json("POST", "/logs/fetch-ack", {"taskId": "ft-missing", "ok": True})
+        self.assertEqual(404, code)
+        self.assertEqual("unknown taskId", unknown["error"])
+
+        code, ack = self._json("POST", "/logs/fetch-ack", {
+            "taskId": task_id,
+            "ok": True,
+            "uploadId": "u-from-device",
+        })
+        self.assertEqual(200, code)
+        self.assertEqual("acked", ack["status"])
+        self.assertEqual("u-from-device", ack["uploadId"])
+        self.assertIsNotNone(ack.get("ackedAt"))
+
+        code, listed = self._json("GET", "/logs/fetch-tasks?unionId=demo-user")
+        self.assertEqual(200, code)
+        self.assertEqual(1, len(listed["tasks"]))
+        self.assertEqual("acked", listed["tasks"][0]["status"])
+        self.assertEqual("u-from-device", listed["tasks"][0]["uploadId"])
+
+        code, pending = self._json("GET", "/logs/fetch-pending?unionId=demo-user")
+        self.assertEqual(200, code)
+        self.assertEqual([], pending["tasks"])
+
+        code, again = self._json("POST", "/logs/fetch-ack", {
+            "taskId": task_id,
+            "ok": True,
+            "uploadId": "u-from-device",
+        })
+        self.assertEqual(200, code)
+        self.assertEqual("acked", again["status"])
+        self.assertTrue(again.get("idempotent"))
+        self.assertEqual("u-from-device", again["uploadId"])
+
+    def test_responses_send_connection_close(self):
+        status, headers, _ = self._raw_get("/logs/fetch-pending?unionId=demo-user&deviceId=dev-1")
+        self.assertEqual(200, status)
+        self.assertEqual("close", headers.get("connection"))
+
+    def test_complete_then_ack_on_reused_http_connection(self):
+        code, created = self._json("POST", "/logs/fetch-tasks", {
+            "unionId": "demo-user",
+            "deviceId": "dev-1",
+        })
+        self.assertEqual(200, code)
+        task_id = created["taskId"]
+        upload_id = "u-keepalive"
+        self._write_task(upload_id, {"unionId": "demo-user"}, details=[
+            {"ts": 1, "msg": "x", "type": "code"},
+        ])
+
+        conn = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer alog-dev",
+            "Connection": "keep-alive",
+        }
+        conn.request("POST", "/logs/uploads/%s/complete" % upload_id, body=b"{}", headers=headers)
+        complete_res = conn.getresponse()
+        complete_headers = {k.lower(): v for k, v in complete_res.getheaders()}
+        complete_body = complete_res.read()
+        self.assertEqual(200, complete_res.status)
+        self.assertEqual("close", complete_headers.get("connection"))
+        self.assertTrue(complete_body)
+
+        ack_raw = json.dumps({
+            "taskId": task_id,
+            "ok": True,
+            "uploadId": upload_id,
+        }).encode("utf-8")
+        conn.request("POST", "/logs/fetch-ack", body=ack_raw, headers=headers)
+        ack_res = conn.getresponse()
+        ack_body = json.loads(ack_res.read().decode("utf-8"))
+        self.assertEqual(200, ack_res.status)
+        self.assertEqual("acked", ack_body["status"])
+        self.assertEqual(upload_id, ack_body["uploadId"])
+        conn.close()
+
+    def test_negotiate_stores_file_date_from_push_filename(self):
+        code, body = self._json("POST", "/logs/uploads", {
+            "appId": "a",
+            "unionId": "user-1",
+            "deviceId": "dev-1",
+            "files": [{"name": "alog_push_20260916_0.alog", "size": 4, "sha256": "aa"}],
+        })
+        self.assertEqual(200, code)
+        upload_id = body["uploadId"]
+        code, listed = self._json("GET", "/logs/tasks?unionId=user-1&fromDate=20260916&toDate=20260916")
+        self.assertEqual(200, code)
+        self.assertEqual([upload_id], [t["uploadId"] for t in listed["tasks"]])
+        self.assertEqual(["20260916"], listed["tasks"][0]["logDates"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,7 @@ import com.chyi.alog.upload.UploadMeta
 import com.chyi.alog.upload.UploadResult
 import com.chyi.alog.upload.collector.AlogFileCollector
 import com.chyi.alog.upload.persist.ChunkStateStore
+import com.chyi.alog.upload.persist.FetchAckStore
 import com.chyi.alog.upload.persist.FileFingerprint
 import com.chyi.alog.upload.persist.UploadAuditLog
 import com.chyi.alog.upload.persist.UploadSessionStore
@@ -30,6 +31,18 @@ internal fun interface HttpTransport {
     ): String
 }
 
+data class FetchTask(
+    val taskId: String,
+    val fromMs: Long? = null,
+    val toMs: Long? = null,
+    val maxBytes: Long? = null,
+)
+
+private fun JSONObject.nullableLong(key: String): Long? {
+    if (!has(key) || isNull(key)) return null
+    return optLong(key)
+}
+
 class LogUploader(
     private val baseUrl: String,
     private val token: String,
@@ -42,6 +55,7 @@ class LogUploader(
     private val audit = UploadAuditLog(auditDir)
     private val chunkState = ChunkStateStore(auditDir)
     private val sessionStore = UploadSessionStore(auditDir)
+    private val fetchAckStore = FetchAckStore(auditDir)
     private var transport: HttpTransport = HttpTransport { method, path, body, contentType, extra ->
         openConnection(method, path, body, contentType, extra)
     }
@@ -68,15 +82,23 @@ class LogUploader(
         this.sleeper = sleeper
     }
 
-    fun upload(files: List<File>, reason: String): UploadResult {
+    fun upload(
+        files: List<File>,
+        reason: String,
+        fromMs: Long? = null,
+        toMs: Long? = null,
+        byteLimit: Long? = null,
+        fetchTaskId: String? = null,
+    ): UploadResult {
         audit.line("start reason=$reason files=${files.joinToString { it.name }}")
-        val selected = AlogFileCollector.select(files, maxBytes, recentDays)
+        val limit = byteLimit ?: maxBytes
+        val selected = AlogFileCollector.select(files, limit, recentDays, fromMs = fromMs, toMs = toMs)
         if (selected.isEmpty()) {
             audit.line("skip empty upload reason=$reason")
             sessionStore.clear()
-            return UploadResult("", false)
+            return UploadResult("", false, fetchTaskId)
         }
-        val truncated = AlogFileCollector.truncated(files, selected, recentDays)
+        val truncated = AlogFileCollector.truncated(files, selected, recentDays, fromMs = fromMs, toMs = toMs)
         val fingerprints = selected.map {
             FileFingerprint(it.name, it.absolutePath, it.length(), sha256(it))
         }
@@ -96,23 +118,93 @@ class LogUploader(
                 putChunks(uploadId, item.getString("fileId"), local)
             }
             complete(uploadId)
+            if (!fetchTaskId.isNullOrBlank()) {
+                fetchAckStore.saveAckPending(fetchTaskId, uploadId)
+                audit.line("fetch ack pending taskId=$fetchTaskId uploadId=$uploadId")
+            }
             sessionStore.clear()
             audit.line("complete uploadId=$uploadId")
-            return UploadResult(uploadId, truncated)
+            return UploadResult(uploadId, truncated, fetchTaskId)
         } catch (t: Throwable) {
             audit.line("failed uploadId=$uploadId ${t.message}")
             throw t
         }
     }
 
-    fun pendingFetchTaskId(unionId: String, deviceId: String): String? {
+    /**
+     * Fetch loop: look up a real pending task, upload only if one exists, ack only after
+     * a successful (non-empty) upload. Never acks placeholder ids.
+     *
+     * If a previous run completed upload but failed ack, [fetchAckStore] resumes at
+     * ack-only (no second negotiate/upload).
+     */
+    fun runFetch(files: List<File>, unionId: String, deviceId: String): UploadResult? {
+        resumePersistedAck()?.let { return it }
+
+        val pending = pendingFetchTask(unionId, deviceId)
+        if (pending == null) {
+            audit.line("skip fetch: no pending task")
+            return null
+        }
+        audit.line("fetch pending taskId=${pending.taskId}")
+        val result = try {
+            upload(
+                files,
+                "fetch",
+                fromMs = pending.fromMs,
+                toMs = pending.toMs,
+                byteLimit = pending.maxBytes,
+                fetchTaskId = pending.taskId,
+            )
+        } catch (t: Throwable) {
+            val msg = t.message.orEmpty()
+            if (msg.startsWith("fetch ack failed") || msg.startsWith("fetch pending lookup failed")) {
+                throw t
+            }
+            audit.line("fetch upload failed taskId=${pending.taskId} ${t.message}")
+            throw IllegalStateException("fetch upload failed: ${t.message}", t)
+        }
+        if (result.uploadId.isEmpty()) {
+            audit.line("skip fetch ack: empty upload taskId=${pending.taskId}")
+            return result
+        }
+        ackFetch(pending.taskId, result.uploadId, ok = true)
+        return result
+    }
+
+    internal fun resumePersistedAck(): UploadResult? {
+        val saved = fetchAckStore.load() ?: return null
+        audit.line("resume fetch ack taskId=${saved.taskId} uploadId=${saved.uploadId}")
+        ackFetch(saved.taskId, saved.uploadId, ok = true)
+        return UploadResult(saved.uploadId, truncated = false, fetchTaskId = saved.taskId)
+    }
+
+    fun hasPersistedFetchAck(): Boolean = fetchAckStore.load() != null
+
+    fun pendingFetchTask(unionId: String, deviceId: String): FetchTask? {
         val qs = "unionId=${enc(unionId)}&deviceId=${enc(deviceId)}"
-        val json = JSONObject(http("GET", "/logs/fetch-pending?$qs", ByteArray(0), "application/json"))
+        val json = try {
+            JSONObject(http("GET", "/logs/fetch-pending?$qs", ByteArray(0), "application/json"))
+        } catch (t: Throwable) {
+            val wrapped = IllegalStateException("fetch pending lookup failed: ${t.message}", t)
+            audit.line(wrapped.message.orEmpty())
+            throw wrapped
+        }
         val tasks = json.optJSONArray("tasks") ?: return null
         if (tasks.length() == 0) return null
-        val id = tasks.getJSONObject(0).optString("taskId")
-        return id.takeIf { it.isNotBlank() }
+        val obj = tasks.getJSONObject(0)
+        val id = obj.optString("taskId")
+        if (id.isBlank()) return null
+        return FetchTask(
+            taskId = id,
+            fromMs = obj.nullableLong("fromMs"),
+            toMs = obj.nullableLong("toMs"),
+            maxBytes = obj.nullableLong("maxBytes")?.takeIf { it > 0 },
+        )
     }
+
+    fun pendingFetchTaskId(unionId: String, deviceId: String): String? =
+        pendingFetchTask(unionId, deviceId)?.taskId
 
     private fun resumeOrNegotiate(
         selected: List<File>,
@@ -145,7 +237,7 @@ class LogUploader(
                     .put("path", fp.path)
                     .put("size", fp.size)
                     .put("sha256", fp.sha256)
-                    .put("date", file.name.substringAfter('_').substringBefore('_')),
+                    .put("date", AlogFileCollector.dateStampOf(file.name).orEmpty()),
             )
         }
         val body = JSONObject()
@@ -207,9 +299,28 @@ class LogUploader(
         }
     }
 
-    fun ackFetch(taskId: String) {
-        val body = JSONObject().put("taskId", taskId).put("ok", true).toString()
-        http("POST", "/logs/fetch-ack", body.toByteArray(), "application/json")
+    fun ackFetch(taskId: String, uploadId: String? = null, ok: Boolean = true) {
+        val body = JSONObject()
+            .put("taskId", taskId)
+            .put("ok", ok)
+        if (!uploadId.isNullOrBlank()) {
+            body.put("uploadId", uploadId)
+        }
+        try {
+            withRetries("fetch-ack $taskId") {
+                http("POST", "/logs/fetch-ack", body.toString().toByteArray(), "application/json")
+            }
+            audit.line("fetch acked taskId=$taskId uploadId=${uploadId.orEmpty()}")
+            fetchAckStore.clear()
+        } catch (t: Throwable) {
+            if (ok && isNonRetriable(t)) {
+                audit.line("fetch ack already applied taskId=$taskId ${t.message}")
+                fetchAckStore.clear()
+                return
+            }
+            audit.line("fetch ack failed taskId=$taskId uploadId=${uploadId.orEmpty()} ${t.message}")
+            throw IllegalStateException("fetch ack failed: ${t.message}", t)
+        }
     }
 
     private fun withRetries(label: String, block: () -> Unit) {
@@ -220,6 +331,7 @@ class LogUploader(
                 block()
                 return
             } catch (t: Throwable) {
+                if (isNonRetriable(t)) throw t
                 attempt++
                 audit.line("retry $label attempt=$attempt ${t.message}")
                 if (attempt >= UploadDefaults.UPLOAD_RETRIES) throw t
@@ -227,6 +339,11 @@ class LogUploader(
                 delay *= 2
             }
         }
+    }
+
+    private fun isNonRetriable(t: Throwable): Boolean {
+        val message = t.message.orEmpty()
+        return "HTTP 400" in message || "HTTP 401" in message || "HTTP 404" in message || "HTTP 409" in message
     }
 
     private fun http(
@@ -245,25 +362,40 @@ class LogUploader(
         extra: Map<String, String>,
     ): String {
         val conn = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection)
-        conn.requestMethod = method
-        conn.doInput = true
-        conn.connectTimeout = 15_000
-        conn.readTimeout = 30_000
-        conn.setRequestProperty("Authorization", "Bearer $token")
-        conn.setRequestProperty("Content-Type", contentType)
-        extra.forEach { (k, v) -> conn.setRequestProperty(k, v) }
-        if (method != "GET") {
-            conn.doOutput = true
-            conn.setFixedLengthStreamingMode(body.size)
-            conn.outputStream.use { it.write(body) }
+        try {
+            conn.requestMethod = method
+            conn.doInput = true
+            conn.useCaches = false
+            conn.instanceFollowRedirects = false
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 30_000
+            conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty("Connection", "close")
+            extra.forEach { (k, v) -> conn.setRequestProperty(k, v) }
+            if (method != "GET" && method != "HEAD") {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", contentType)
+                conn.setFixedLengthStreamingMode(body.size)
+                conn.outputStream.use { it.write(body) }
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val other = if (code in 200..299) conn.errorStream else conn.inputStream
+            try {
+                other?.close()
+            } catch (_: Throwable) {
+            }
+            if (code !in 200..299) {
+                throw IllegalStateException("HTTP $code $path $text")
+            }
+            return if (text.isEmpty()) "{}" else text
+        } finally {
+            try {
+                conn.disconnect()
+            } catch (_: Throwable) {
+            }
         }
-        val code = conn.responseCode
-        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-        val text = stream?.bufferedReader()?.readText().orEmpty()
-        if (code !in 200..299) {
-            throw IllegalStateException("HTTP $code $path $text")
-        }
-        return if (text.isEmpty()) "{}" else text
     }
 
     companion object {

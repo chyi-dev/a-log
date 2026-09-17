@@ -119,6 +119,33 @@ class AlogFileCollectorTest {
             ),
         )
     }
+
+    @Test
+    fun dateStampOfReadsPushPrefixAndDateOnlyNames() {
+        assertEquals("20260916", com.chyi.alog.upload.collector.AlogFileCollector.dateStampOf("alog_push_20260916_0.alog"))
+        assertEquals("20260916", com.chyi.alog.upload.collector.AlogFileCollector.dateStampOf("alog_20260916.alog"))
+        assertEquals("20260916", com.chyi.alog.upload.collector.AlogFileCollector.dateStampOf("alog_20260916_0.alog"))
+    }
+
+    @Test
+    fun fromMsToMsKeepsOverlappingDayFiles() {
+        val old = tmp.newFile("alog_20200101_0.alog")
+        old.writeText("old")
+        val mid = tmp.newFile("alog_20260916_0.alog")
+        mid.writeText("mid")
+        val future = tmp.newFile("alog_20991231_0.alog")
+        future.writeText("future")
+        val day = SimpleDateFormatHolder.parse("20260916")
+        val selected = com.chyi.alog.upload.collector.AlogFileCollector.select(
+            listOf(old, mid, future),
+            maxBytes = 50_000,
+            recentDays = 2,
+            nowMs = SimpleDateFormatHolder.parse("20991231"),
+            fromMs = day,
+            toMs = day + java.util.concurrent.TimeUnit.DAYS.toMillis(1) - 1,
+        )
+        assertEquals(listOf(mid.name), selected.map { it.name })
+    }
 }
 
 private object SimpleDateFormatHolder {

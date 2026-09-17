@@ -254,6 +254,8 @@
 
     tbody tr:hover { background: rgba(37, 99, 235, 0.04); }
 
+    tbody tr.selected { background: rgba(37, 99, 235, 0.10); }
+
     tbody tr.clickable { cursor: pointer; }
 
     .empty-row td {
@@ -347,10 +349,10 @@
       border: 1px solid #bbf7d0;
     }
 
-    .alert.err {
-      background: #fee2e2;
-      color: #991b1b;
-      border: 1px solid #fecaca;
+    .alert.info {
+      background: #dbeafe;
+      color: #1e3a8a;
+      border: 1px solid #bfdbfe;
     }
 
     .alert:empty { display: none; }
@@ -375,12 +377,31 @@
         <label class="field">API<input id="apiBase" size="28" /></label>
         <label class="field">unionId<input id="unionId" value="demo-user" /></label>
         <label class="field">deviceId<input id="deviceId" placeholder="可选" /></label>
+        <label class="field">fromDate<input id="fromDate" type="date" /></label>
+        <label class="field">toDate<input id="toDate" type="date" /></label>
+        <label class="field">type
+          <select id="taskType">
+            <option value="">all</option>
+            <option value="code">code</option>
+            <option value="network">network</option>
+            <option value="action">action</option>
+            <option value="internal">internal</option>
+            <option value="t10">t10 (business)</option>
+          </select>
+        </label>
         <button id="btnLoad" class="btn btn-primary" type="button">加载上传任务</button>
+      </div>
+      <p id="taskHint" class="alert"></p>
+      <div class="pagination">
+        <button id="btnTaskPrev" class="btn btn-sm" type="button" disabled>上一页</button>
+        <button id="btnTaskNext" class="btn btn-sm" type="button" disabled>下一页</button>
+        <label class="field">每页<input id="taskPageSize" type="number" value="50" min="1" max="200" /></label>
+        <span id="taskPageMeta" class="detail-meta"></span>
       </div>
       <div class="table-scroll">
         <table>
           <thead>
-            <tr><th>uploadId</th><th>reason</th><th>unionId</th><th>status</th><th>操作</th></tr>
+            <tr><th>uploadId</th><th>reason</th><th>unionId</th><th>deviceId</th><th>日期</th><th>status</th><th>操作</th></tr>
           </thead>
           <tbody id="tasks"></tbody>
         </table>
@@ -396,14 +417,17 @@
         <label class="field">type
           <select id="detailType">
             <option value="">all</option>
-            <option>code</option>
-            <option>network</option>
-            <option>action</option>
-            <option>internal</option>
+            <option value="code">code</option>
+            <option value="network">network</option>
+            <option value="action">action</option>
+            <option value="internal">internal</option>
+            <option value="t10">t10 (business)</option>
           </select>
         </label>
         <label class="field">tag<input id="detailTag" placeholder="精确匹配" /></label>
         <label class="field">关键字<input id="detailQ" placeholder="全文搜索" /></label>
+        <label class="field">fromDate<input id="detailFromDate" type="date" /></label>
+        <label class="field">toDate<input id="detailToDate" type="date" /></label>
         <button id="btnApplyFilter" class="btn btn-primary" type="button">筛选</button>
         <button id="btnParseSerial" class="btn btn-ghost" type="button" disabled>解析串口</button>
         <button id="btnDownloadTxt" class="btn btn-ghost" type="button" disabled>下载 txt</button>
@@ -429,12 +453,14 @@
       <div class="card-header">
         <h2>回捞任务</h2>
       </div>
-      <p class="card-desc">不走 Push：App 点「模拟回捞」时会拉取 pending 任务并上传，再 fetch-ack。</p>
+      <p class="card-desc">控制台创建 pending 任务后，在 sample 点「模拟回捞」：客户端先拉 pending，再上传，最后 <code>POST /logs/fetch-ack</code>。成功后本表 status 变为 acked，并带上对应 uploadId。</p>
       <div class="form-grid">
         <label class="field">unionId<input id="fetchUnion" value="demo-user" /></label>
         <label class="field">deviceId<input id="fetchDevice" placeholder="可选，空则该用户全部设备" /></label>
-        <label class="field">fromMs<input id="fetchFrom" type="number" placeholder="起始毫秒" /></label>
-        <label class="field">toMs<input id="fetchTo" type="number" placeholder="结束毫秒" /></label>
+        <label class="field">fromDate<input id="fetchFromDate" type="date" /></label>
+        <label class="field">toDate<input id="fetchToDate" type="date" /></label>
+        <label class="field">fromMs<input id="fetchFrom" type="number" placeholder="可由日期填充" /></label>
+        <label class="field">toMs<input id="fetchTo" type="number" placeholder="可由日期填充" /></label>
         <label class="field">maxBytes<input id="fetchMax" type="number" value="52428800" /></label>
         <label class="field">level<input id="fetchLevel" placeholder="可选 INFO/ERROR" /></label>
       </div>
@@ -446,7 +472,7 @@
       <div class="table-scroll">
         <table>
           <thead>
-            <tr><th>taskId</th><th>status</th><th>unionId</th><th>deviceId</th><th>fromMs</th><th>toMs</th><th>maxBytes</th></tr>
+            <tr><th>taskId</th><th>status</th><th>unionId</th><th>deviceId</th><th>时间窗</th><th>uploadId</th><th>ackedAt</th></tr>
           </thead>
           <tbody id="fetchTasks"></tbody>
         </table>
@@ -507,7 +533,7 @@
     function statusBadge(status) {
       const s = String(status || "").toLowerCase();
       let cls = "badge";
-      if (s === "done") cls += " badge-done";
+      if (s === "done" || s === "acked") cls += " badge-done";
       else if (s === "pending" || s === "negotiating") cls += " badge-pending";
       else if (s === "failed" || s === "error") cls += " badge-failed";
       return `<span class="${cls}">${escapeHtml(status || "")}</span>`;
@@ -529,31 +555,99 @@
       return tr;
     }
 
-    document.getElementById("btnLoad").onclick = async () => {
+    let taskPage = 0;
+    let taskTotal = 0;
+    let taskLoadSeq = 0;
+    let currentUploadId = "";
+    let currentPage = 0;
+    let currentTotal = 0;
+    let detailsSeq = 0;
+    let serialAnnotate = false;
+
+    function setHint(id, text, kind) {
+      const el = document.getElementById(id);
+      el.textContent = text || "";
+      el.className = "alert" + (text ? (kind === "err" ? " err" : kind === "info" ? " info" : " ok") : "");
+    }
+
+    function dateValue(id) {
+      return (document.getElementById(id).value || "").replace(/-/g, "");
+    }
+
+    function fmtDateRange(task) {
+      const dates = task.logDates || [];
+      if (dates.length) {
+        const first = dates[0];
+        const last = dates[dates.length - 1];
+        return first === last ? first : first + " ~ " + last;
+      }
+      return "";
+    }
+
+    function highlightSelectedTask() {
+      document.querySelectorAll("#tasks tr[data-id]").forEach((tr) => {
+        tr.classList.toggle("selected", tr.getAttribute("data-id") === currentUploadId);
+      });
+    }
+
+    function taskQuery() {
+      const qs = new URLSearchParams();
+      const u = document.getElementById("unionId").value.trim();
+      const d = document.getElementById("deviceId").value.trim();
+      const fromDate = dateValue("fromDate");
+      const toDate = dateValue("toDate");
+      const typ = document.getElementById("taskType").value;
+      const size = Math.max(1, Number(document.getElementById("taskPageSize").value) || 50);
+      if (u) qs.set("unionId", u);
+      if (d) qs.set("deviceId", d);
+      if (fromDate) qs.set("fromDate", fromDate);
+      if (toDate) qs.set("toDate", toDate);
+      if (typ) qs.set("type", typ);
+      qs.set("page", String(taskPage));
+      qs.set("size", String(size));
+      return { qs, size };
+    }
+
+    async function loadTasks() {
       const btn = document.getElementById("btnLoad");
       const prevText = btn.textContent;
+      const seq = ++taskLoadSeq;
       btn.disabled = true;
       btn.textContent = "加载中…";
+      const tb = document.getElementById("tasks");
+      tb.innerHTML = "";
+      tb.appendChild(emptyRow(7, "加载中…"));
       try {
-        const u = document.getElementById("unionId").value;
-        const d = document.getElementById("deviceId").value;
-        const qs = new URLSearchParams();
-        if (u) qs.set("unionId", u);
-        if (d) qs.set("deviceId", d);
+        const { qs, size } = taskQuery();
         const data = await api("/logs/tasks?" + qs.toString());
-        const tb = document.getElementById("tasks");
+        if (seq !== taskLoadSeq) return;
+        setHint("taskHint", "", "");
+        taskTotal = data.total || 0;
+        const pages = Math.max(1, Math.ceil(taskTotal / size) || 1);
+        if (taskPage >= pages) {
+          taskPage = Math.max(0, pages - 1);
+          if (taskTotal > 0) return loadTasks();
+        }
+        document.getElementById("taskPageMeta").textContent =
+          "共 " + taskTotal + " 条 · 第 " + (taskPage + 1) + " / " + pages + " 页";
+        document.getElementById("btnTaskPrev").disabled = taskPage <= 0;
+        document.getElementById("btnTaskNext").disabled = taskPage + 1 >= pages || taskTotal === 0;
         tb.innerHTML = "";
         const tasks = data.tasks || [];
         if (!tasks.length) {
-          tb.appendChild(emptyRow(5, "暂无数据"));
+          tb.appendChild(emptyRow(7, "暂无上传任务"));
           return;
         }
         for (const t of tasks) {
           const tr = document.createElement("tr");
+          tr.setAttribute("data-id", t.uploadId || "");
+          tr.className = "clickable";
           tr.innerHTML =
             `<td>${escapeHtml(t.uploadId || "")}</td>` +
             `<td>${escapeHtml(t.reason || "")}</td>` +
             `<td>${escapeHtml(t.unionId || "")}</td>` +
+            `<td>${escapeHtml(t.deviceId || "")}</td>` +
+            `<td>${escapeHtml(fmtDateRange(t))}</td>` +
             `<td>${statusBadge(t.status)}</td>`;
           const td = document.createElement("td");
           td.className = "btn-group";
@@ -561,13 +655,17 @@
           b.className = "btn btn-sm btn-primary";
           b.type = "button";
           b.textContent = "解密显示";
-          b.onclick = () => openDetails(t.uploadId, true);
+          b.onclick = (ev) => {
+            ev.stopPropagation();
+            openDetails(t.uploadId, true);
+          };
           td.appendChild(b);
           const dl = document.createElement("button");
           dl.className = "btn btn-sm btn-ghost";
           dl.type = "button";
           dl.textContent = "下载 txt";
-          dl.onclick = async () => {
+          dl.onclick = async (ev) => {
+            ev.stopPropagation();
             try {
               await downloadLegacyTxt(t.uploadId);
             } catch (e) {
@@ -579,7 +677,8 @@
           ds.className = "btn btn-sm btn-ghost";
           ds.type = "button";
           ds.textContent = "下载源文件";
-          ds.onclick = async () => {
+          ds.onclick = async (ev) => {
+            ev.stopPropagation();
             try {
               await downloadSource(t.uploadId);
             } catch (e) {
@@ -588,18 +687,44 @@
           };
           td.appendChild(ds);
           tr.appendChild(td);
+          tr.onclick = () => openDetails(t.uploadId, true);
           tb.appendChild(tr);
         }
+        highlightSelectedTask();
+      } catch (e) {
+        if (seq !== taskLoadSeq) return;
+        tb.innerHTML = "";
+        tb.appendChild(emptyRow(7, "加载失败"));
+        setHint("taskHint", e.message, "err");
+        document.getElementById("taskPageMeta").textContent = "";
+        document.getElementById("btnTaskPrev").disabled = true;
+        document.getElementById("btnTaskNext").disabled = true;
       } finally {
-        btn.disabled = false;
-        btn.textContent = prevText;
+        if (seq === taskLoadSeq) {
+          btn.disabled = false;
+          btn.textContent = prevText;
+        }
+      }
+    }
+
+    document.getElementById("btnLoad").onclick = () => {
+      taskPage = 0;
+      return loadTasks();
+    };
+    document.getElementById("btnTaskPrev").onclick = () => {
+      if (taskPage > 0) {
+        taskPage -= 1;
+        return loadTasks();
       }
     };
-
-    let currentUploadId = "";
-    let currentPage = 0;
-    let currentTotal = 0;
-    let serialAnnotate = false;
+    document.getElementById("btnTaskNext").onclick = () => {
+      taskPage += 1;
+      return loadTasks();
+    };
+    document.getElementById("taskPageSize").onchange = () => {
+      taskPage = 0;
+      return loadTasks();
+    };
 
     function setDetailMeta(text, isError) {
       const el = document.getElementById("detailMeta");
@@ -622,21 +747,30 @@
     }
 
     async function openDetails(id, decode) {
+      const seq = ++detailsSeq;
       currentUploadId = id;
       currentPage = 0;
       serialAnnotate = false;
       syncSerialButtons();
       setDetailActive(true);
+      highlightSelectedTask();
+      const tb = document.getElementById("logRows");
+      tb.innerHTML = "";
+      tb.appendChild(emptyRow(5, "加载中…"));
       if (decode) {
         setDetailMeta("正在解密 <strong>" + escapeHtml(id) + "</strong> …");
         try {
           await api("/logs/tasks/" + id + "/decode", "POST", {});
         } catch (e) {
+          if (seq !== detailsSeq) return;
           setDetailMeta("解密失败: " + e.message, true);
+          tb.innerHTML = "";
+          tb.appendChild(emptyRow(5, "解密失败"));
           return;
         }
       }
-      await loadDetailsPage();
+      if (seq !== detailsSeq) return;
+      await loadDetailsPage(seq);
     }
 
     function detailQuery(extra) {
@@ -644,66 +778,84 @@
       const typ = document.getElementById("detailType").value;
       const tag = document.getElementById("detailTag").value.trim();
       const q = document.getElementById("detailQ").value;
+      const fromDate = dateValue("detailFromDate");
+      const toDate = dateValue("detailToDate");
       if (typ) qs.set("type", typ);
       if (tag) qs.set("tag", tag);
       if (q) qs.set("q", q);
+      if (fromDate) qs.set("fromDate", fromDate);
+      if (toDate) qs.set("toDate", toDate);
       if (serialAnnotate) qs.set("serial", "1");
       if (extra) Object.keys(extra).forEach((k) => qs.set(k, extra[k]));
       return qs;
     }
 
-    async function loadDetailsPage() {
+    async function loadDetailsPage(seq) {
       if (!currentUploadId) return;
+      const mySeq = seq || ++detailsSeq;
       const size = Math.max(1, Number(document.getElementById("pageSize").value) || 200);
       const qs = detailQuery({ page: String(currentPage), size: String(size) });
-      const data = await api("/logs/tasks/" + currentUploadId + "/details?" + qs.toString());
-      currentTotal = data.total || 0;
-      const pages = Math.max(1, Math.ceil(currentTotal / size) || 1);
-      if (currentPage >= pages) currentPage = pages - 1;
-      setDetailMeta(
-        "<strong>" + escapeHtml(currentUploadId) + "</strong> 共 " + currentTotal +
-        " 条 · 第 " + (currentPage + 1) + " / " + pages + " 页" +
-        (serialAnnotate ? " · 串口解译开" : "")
-      );
-      document.getElementById("btnPrev").disabled = currentPage <= 0;
-      document.getElementById("btnNext").disabled = currentPage + 1 >= pages;
       const tb = document.getElementById("logRows");
-      tb.innerHTML = "";
-      const items = data.items || [];
-      if (!items.length) {
-        tb.appendChild(emptyRow(5, "暂无数据"));
-        return;
-      }
-      for (const row of items) {
-        const tr = document.createElement("tr");
-        tr.className = "clickable";
-        const lv = row.level || "";
-        const notes = row.serialNotes || [];
-        let msgHtml = `<div class="msg" title="${escapeHtml(row.msg || "")}">${escapeHtml(row.msg || JSON.stringify(row))}</div>`;
-        if (notes.length) {
-          msgHtml += `<pre class="serial-notes">${escapeHtml(notes.map((n) => "  " + n).join("\n"))}</pre>`;
+      try {
+        const data = await api("/logs/tasks/" + currentUploadId + "/details?" + qs.toString());
+        if (mySeq !== detailsSeq) return;
+        currentTotal = data.total || 0;
+        const pages = Math.max(1, Math.ceil(currentTotal / size) || 1);
+        if (currentPage >= pages && currentTotal > 0) {
+          currentPage = pages - 1;
+          return loadDetailsPage(mySeq);
         }
-        tr.innerHTML =
-          `<td>${escapeHtml(fmtTs(row.ts))}</td>` +
-          `<td class="${levelClass(lv)}">${escapeHtml(lv)}</td>` +
-          `<td>${escapeHtml(row.type || "")}</td>` +
-          `<td>${escapeHtml(row.tag || "")}</td>` +
-          `<td class="msg-cell">${msgHtml}</td>`;
-        tr.onclick = () => {
-          const next = tr.nextSibling;
-          if (next && next.classList && next.classList.contains("row-open")) {
-            next.remove();
-            return;
+        setDetailMeta(
+          "<strong>" + escapeHtml(currentUploadId) + "</strong> 共 " + currentTotal +
+          " 条 · 第 " + (currentPage + 1) + " / " + pages + " 页" +
+          (serialAnnotate ? " · 串口解译开" : "")
+        );
+        document.getElementById("btnPrev").disabled = currentPage <= 0;
+        document.getElementById("btnNext").disabled = currentPage + 1 >= pages || currentTotal === 0;
+        tb.innerHTML = "";
+        const items = data.items || [];
+        if (!items.length) {
+          tb.appendChild(emptyRow(5, "暂无数据"));
+          return;
+        }
+        for (const row of items) {
+          const tr = document.createElement("tr");
+          tr.className = "clickable";
+          const lv = row.level || "";
+          const notes = row.serialNotes || [];
+          let msgHtml = `<div class="msg" title="${escapeHtml(row.msg || "")}">${escapeHtml(row.msg || JSON.stringify(row))}</div>`;
+          if (notes.length) {
+            msgHtml += `<pre class="serial-notes">${escapeHtml(notes.map((n) => "  " + n).join("\n"))}</pre>`;
           }
-          const open = document.createElement("tr");
-          open.className = "row-open";
-          const td = document.createElement("td");
-          td.colSpan = 5;
-          td.innerHTML = "<pre>" + escapeHtml(JSON.stringify(row, null, 2)) + "</pre>";
-          open.appendChild(td);
-          tr.parentNode.insertBefore(open, tr.nextSibling);
-        };
-        tb.appendChild(tr);
+          tr.innerHTML =
+            `<td>${escapeHtml(fmtTs(row.ts))}</td>` +
+            `<td class="${levelClass(lv)}">${escapeHtml(lv)}</td>` +
+            `<td>${escapeHtml(row.type || "")}</td>` +
+            `<td>${escapeHtml(row.tag || "")}</td>` +
+            `<td class="msg-cell">${msgHtml}</td>`;
+          tr.onclick = () => {
+            const next = tr.nextSibling;
+            if (next && next.classList && next.classList.contains("row-open")) {
+              next.remove();
+              return;
+            }
+            const open = document.createElement("tr");
+            open.className = "row-open";
+            const td = document.createElement("td");
+            td.colSpan = 5;
+            td.innerHTML = "<pre>" + escapeHtml(JSON.stringify(row, null, 2)) + "</pre>";
+            open.appendChild(td);
+            tr.parentNode.insertBefore(open, tr.nextSibling);
+          };
+          tb.appendChild(tr);
+        }
+      } catch (e) {
+        if (mySeq !== detailsSeq) return;
+        setDetailMeta("详情加载失败: " + e.message, true);
+        tb.innerHTML = "";
+        tb.appendChild(emptyRow(5, "加载失败"));
+        document.getElementById("btnPrev").disabled = true;
+        document.getElementById("btnNext").disabled = true;
       }
     }
 
@@ -777,9 +929,11 @@
       });
       if (!res.ok) throw new Error(await res.text());
       const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = /filename="([^"]+)"/.exec(cd);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = opts && opts.serial ? uploadId + "-serial.txt" : uploadId + ".txt";
+      a.download = m && m[1] ? m[1] : (opts && opts.serial ? uploadId + "-serial.txt" : uploadId + ".txt");
       a.click();
       URL.revokeObjectURL(a.href);
     }
@@ -816,8 +970,42 @@
       hint.className = "alert" + (text ? (isError ? " err" : " ok") : "");
     }
 
+    function dayStartMs(yyyyMmDd) {
+      if (!yyyyMmDd) return null;
+      const d = new Date(yyyyMmDd + "T00:00:00");
+      const n = d.getTime();
+      return isNaN(n) ? null : n;
+    }
+
+    function dayEndMs(yyyyMmDd) {
+      if (!yyyyMmDd) return null;
+      const d = new Date(yyyyMmDd + "T23:59:59.999");
+      const n = d.getTime();
+      return isNaN(n) ? null : n;
+    }
+
+    function syncFetchMsFromDates() {
+      const fromDate = document.getElementById("fetchFromDate").value;
+      const toDate = document.getElementById("fetchToDate").value;
+      const fromMs = dayStartMs(fromDate);
+      const toMs = dayEndMs(toDate);
+      if (fromMs != null) document.getElementById("fetchFrom").value = String(fromMs);
+      if (toMs != null) document.getElementById("fetchTo").value = String(toMs);
+    }
+
+    document.getElementById("fetchFromDate").addEventListener("change", syncFetchMsFromDates);
+    document.getElementById("fetchToDate").addEventListener("change", syncFetchMsFromDates);
+
+    function fmtFetchWindow(t) {
+      const from = t.fromMs != null && t.fromMs !== "" ? fmtTs(t.fromMs) : "";
+      const to = t.toMs != null && t.toMs !== "" ? fmtTs(t.toMs) : "";
+      if (!from && !to) return "默认最近 2 天";
+      return (from || "…") + " → " + (to || "…");
+    }
+
     document.getElementById("btnCreateFetch").onclick = async () => {
       try {
+        syncFetchMsFromDates();
         const created = await api("/logs/fetch-tasks", "POST", {
           unionId: document.getElementById("fetchUnion").value,
           deviceId: document.getElementById("fetchDevice").value,
@@ -826,7 +1014,7 @@
           maxBytes: numOrNull("fetchMax") || 52428800,
           level: document.getElementById("fetchLevel").value,
         });
-        setFetchHint("已创建 " + created.taskId + "，请在 App 点「模拟回捞」", false);
+        setFetchHint("已创建 " + created.taskId + "（pending）。请在 sample 点「模拟回捞」，完成后点刷新，status 应变为 acked。", false);
         await loadFetchTasks();
       } catch (e) {
         setFetchHint(e.message, true);
@@ -839,30 +1027,52 @@
       const qs = new URLSearchParams();
       if (u) qs.set("unionId", u);
       if (d) qs.set("deviceId", d);
-      const data = await api("/logs/fetch-tasks?" + qs.toString());
       const tb = document.getElementById("fetchTasks");
-      tb.innerHTML = "";
-      const tasks = data.tasks || [];
-      if (!tasks.length) {
-        tb.appendChild(emptyRow(7, "暂无数据"));
-        return;
-      }
-      for (const t of tasks) {
-        const tr = document.createElement("tr");
-        tr.innerHTML =
-          `<td>${escapeHtml(t.taskId || "")}</td>` +
-          `<td>${statusBadge(t.status)}</td>` +
-          `<td>${escapeHtml(t.unionId || "")}</td>` +
-          `<td>${escapeHtml(t.deviceId || "")}</td>` +
-          `<td>${escapeHtml(String(t.fromMs ?? ""))}</td>` +
-          `<td>${escapeHtml(String(t.toMs ?? ""))}</td>` +
-          `<td>${escapeHtml(String(t.maxBytes ?? ""))}</td>`;
-        tb.appendChild(tr);
+      try {
+        const data = await api("/logs/fetch-tasks?" + qs.toString());
+        tb.innerHTML = "";
+        const tasks = data.tasks || [];
+        if (!tasks.length) {
+          tb.appendChild(emptyRow(7, "暂无回捞任务"));
+          return;
+        }
+        for (const t of tasks) {
+          const tr = document.createElement("tr");
+          const uploadId = t.uploadId || "";
+          const uploadCell = uploadId
+            ? `<button class="btn btn-sm btn-ghost" type="button" data-open="${escapeHtml(uploadId)}">${escapeHtml(uploadId)}</button>`
+            : "";
+          tr.innerHTML =
+            `<td>${escapeHtml(t.taskId || "")}</td>` +
+            `<td>${statusBadge(t.status)}</td>` +
+            `<td>${escapeHtml(t.unionId || "")}</td>` +
+            `<td>${escapeHtml(t.deviceId || "")}</td>` +
+            `<td>${escapeHtml(fmtFetchWindow(t))}</td>` +
+            `<td>${uploadCell}</td>` +
+            `<td>${escapeHtml(t.ackedAt ? fmtTs(t.ackedAt) : "")}</td>`;
+          const openBtn = tr.querySelector("[data-open]");
+          if (openBtn) {
+            openBtn.onclick = () => openDetails(openBtn.getAttribute("data-open"), true);
+          }
+          tb.appendChild(tr);
+        }
+      } catch (e) {
+        tb.innerHTML = "";
+        tb.appendChild(emptyRow(7, "加载失败"));
+        throw e;
       }
     }
 
-    document.getElementById("btnLoadFetch").onclick = loadFetchTasks;
+    document.getElementById("btnLoadFetch").onclick = async () => {
+      try {
+        await loadFetchTasks();
+        setFetchHint("已刷新回捞列表", false);
+      } catch (e) {
+        setFetchHint(e.message, true);
+      }
+    };
 
+    loadTasks().catch((e) => setHint("taskHint", e.message, "err"));
     loadFetchTasks().catch((e) => {
       setFetchHint("连不上 ingest（请先 python server.py 8080）：" + e.message, true);
     });

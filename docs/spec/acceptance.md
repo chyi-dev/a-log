@@ -77,3 +77,67 @@ adb logcat -d -s ALog:V ALog:*
   - `maxFrameMs`：**&lt; 32**
   - `mmapDropped`：0（batch 占 1 个队列槽；1 万条由 store 线程写出）。`ALogBurst.dropped` 只表示掉帧
 - Debug 双通道会因 Logcat 同步打印而掉帧，不作为本项达标依据。
+
+## P1 查询控制台 / 回捞（M4）
+
+自动化（无需设备）：
+
+```
+python3 -m unittest test_server.py
+# cwd: server/alog-ingest
+
+./gradlew :alog-upload:testDebugUnitTest --tests com.chyi.alog.upload.protocol.LogUploaderProtocolTest --tests com.chyi.alog.upload.protocol.LogUploaderTest --tests com.chyi.alog.upload.protocol.AlogFileCollectorTest
+```
+
+### 启动控制台
+
+```
+cd server/alog-ingest
+python3 server.py 8080
+# 打开 http://127.0.0.1:8080/  token 为 alog-dev
+```
+
+Sample 默认 ingest：`http://10.0.2.2:8080`（模拟器访问宿主机）。真机改为电脑局域网 IP。
+
+### 多条件检索
+
+- 控制台「上传任务」：unionId、deviceId、fromDate、toDate、type 与任务分页。
+- 同一 unionId 两天文件应能按 fromDate=toDate 分开列出（文件名中的 `yyyyMMdd`，含 `alog_push_yyyyMMdd_*.alog`）。
+- 「日志详情」：type / tag / 关键字 / 日期；只选 `network` 时看不到 `code` 行。`type=2` 与 `type=network` 等价。
+- 无匹配：任务表「暂无上传任务」；详情「暂无数据」。ingest 未启动：红色错误条，不白屏。
+
+### 任务列表与详情稳定
+
+- 任务按时间新到旧；坏 JSON 任务文件被跳过，不 500。
+- 连续点不同任务：后一次详情覆盖前一次，不会把旧结果写回来。
+- 详情分页（上一页/下一页/每页条数）与 `total` 一致；非法 page/size 不 500。
+
+### 导出
+
+- 任务行或详情工具条：「下载 txt」→ `GET /logs/tasks/{id}/export.txt`（当前 type/tag/q/日期过滤生效）。
+- 「下载源文件」→ `GET .../export.source`（单文件 `.alog`，多文件 zip）。
+- 未选任务时导出按钮禁用。
+
+### 回捞闭环
+
+1. 控制台填 unionId=`demo-user`（与 sample 一致），可选日期窗，点「创建回捞任务」，得到 **一条** pending（记下 `taskId`，例如 `ft-…`）。
+2. Sample **只点一次**「模拟回捞」（需已有 `.alog` 且网络可达 ingest）。不要连点。WorkManager 使用唯一工作 `alog-upload`（APPEND）+ 进程内文件锁。
+3. ingest 访问日志对这一次点按应出现：
+   - `GET /logs/fetch-pending`（一次）
+   - `POST /logs/uploads` + chunks + **`POST /logs/uploads/{uploadId}/complete` 200**
+   - **`POST /logs/fetch-ack` 200**（body 含真实 `taskId` + `uploadId`）
+   - **没有** 约 30s 后的第二次 `POST /logs/uploads`（那是旧版把 ack 失败当成整单 RETRY）
+4. 控制台「刷新列表」：status=`acked`，`ackedAt` 有值，`uploadId` 可点进详情。对该 `taskId` 应只有 **一次** 成功 `POST /logs/fetch-ack`（重复 ack 返回 200/`idempotent`，不再 404）。
+5. logcat：`adb logcat -s ALogUpload:I`
+   - 成功：`fetch acked taskId=ft-… uploadId=u-…`
+   - 阶段失败字符串必须可区分：`fetch pending lookup failed:` / `fetch upload failed:` / `fetch ack failed:`（ack 阶段的 `unexpected end of stream` **不得** 打成 pending lookup）
+6. **无 pending 证明：** 确认控制台没有 `pending` 后，再点一次「模拟回捞」。不要连点。
+   - logcat 出现 `fetch skipped: no pending task`
+   - ingest 终端 **没有** 新的 `POST /logs/uploads` 或 `POST /logs/fetch-ack`
+   - 控制台回捞列表不会多出 `sample-fetch` 或新的 failed/acked 行
+7. **ack 独立重试（设备）：** 一条 pending → 点一次回捞 → 在 ingest 已打印 `complete` 之后、ack 到达之前断开网络（或防火墙丢 `POST /logs/fetch-ack`）。应看到 logcat `fetch ack failed:`；恢复网络后 Worker 只再发 **ack**（ingest 无第二次 `POST /logs/uploads`），任务变为 `acked`。
+8. `POST /logs/fetch-ack` 无 taskId → 400；**未知** taskId → 404。已 acked 的 taskId 再 ack → 200（幂等）。
+
+失败路径：upload/`complete` 失败时 **不会** ack；Worker 只对 5xx/网络错误 retry。ack 网络失败重试 **ack-only**（`filesDir/alog-audit/fetch_ack.json`）。`complete` 409 不重试（避免分片未齐时打爆 ingest）。
+
+设备上才能做的：sample 实际上传与 WorkManager 回捞。Agent 覆盖 ingest 幂等 ack/complete/`Connection: close`，以及 `runFetch`：无 pending 不上传不 ack；上传失败不 ack；上传成功 + ack 失败则只重试 ack。

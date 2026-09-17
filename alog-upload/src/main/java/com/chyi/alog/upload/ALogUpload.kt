@@ -2,6 +2,7 @@ package com.chyi.alog.upload
 
 import android.content.Context
 import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -9,6 +10,8 @@ import androidx.work.workDataOf
 import com.chyi.alog.upload.scheduler.UploadWorker
 
 object ALogUpload {
+    const val UNIQUE_WORK_NAME = "alog-upload"
+
     @JvmStatic
     fun enqueue(context: Context, config: UploadConfig, reason: String) {
         val network = if (reason == "manual") NetworkType.CONNECTED else NetworkType.UNMETERED
@@ -30,7 +33,12 @@ object ALogUpload {
         val request = OneTimeWorkRequestBuilder<UploadWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(network).build())
             .setInputData(data)
+            .addTag(reason)
             .build()
-        WorkManager.getInstance(context).enqueue(request)
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            UNIQUE_WORK_NAME,
+            ExistingWorkPolicy.APPEND,
+            request,
+        )
     }
 }
